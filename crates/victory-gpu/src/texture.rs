@@ -772,6 +772,7 @@ impl Staging {
 
     /// Detiles `tiled` (the texture's memory) into the staging buffer.
     fn detile(&self, tiled: &[u8]) {
+        let began = std::time::Instant::now();
         self.dirty.store(true, std::sync::atomic::Ordering::Relaxed);
         #[cfg(feature = "diagnostics")]
         if tiled.iter().all(|&b| b == 0) {
@@ -797,6 +798,16 @@ impl Staging {
                 tracing::warn!(?e, mip, slice, "texture not detiled");
                 return;
             }
+        }
+        let took = began.elapsed();
+        if took > std::time::Duration::from_millis(50) {
+            tracing::warn!(
+                ms = took.as_millis() as u64,
+                bytes = tiled.len(),
+                mips = self.mips,
+                desc = ?self.layout.desc,
+                "a texture's detile was slow"
+            );
         }
     }
 }
