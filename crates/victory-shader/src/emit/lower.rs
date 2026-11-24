@@ -6999,6 +6999,15 @@ impl<'a> Lower<'a> {
                 let r = self.s.m.cast(c, op, a, self.s.t.f32);
                 float(self, r)
             }
+            "v_cvt_f32_f64" => {
+                // A 64-bit source register pair read as a double, converted
+                // to the low 32 bits' float form.
+                let a = self.src64(inst, 0)?;
+                let d64 = self.s.m.double();
+                let d = self.s.m.cast(c, Cast::Bitcast, a, d64);
+                let r = self.s.m.cast(c, Cast::FpTrunc, d, self.s.t.f32);
+                float(self, r)
+            }
             "v_fma_mix_f32" | "v_fma_mixlo_f16" | "v_fma_mixhi_f16" => {
                 // Each source is f32, or with op_sel_hi the low (op_sel: high)
                 // f16 half; neg_hi is the absolute value here.
@@ -8572,8 +8581,39 @@ impl<'a> Lower<'a> {
         }
     }
 
+    /// Whether a phi, or an instruction other than an interpolation's second
+    /// half (`v_interp_p2*`), reads `v`.
+    fn read_past_interpolation(&self, v: Value) -> bool {
+        self.x.p.blocks.iter().any(|b| {
+            b.phis.iter().any(|p| p.args.contains(&v))
+                || b.insts.iter().any(|i| {
+                    !i.name().starts_with("v_interp_p2") && i.reads.iter().any(|r| r.1 == v)
+                })
+        })
+    }
+
     fn interp(&mut self, inst: &Inst, site: Site) -> Result<(), Why> {
         let Some(&interp) = self.interps.get(&site) else {
+            if inst.name().starts_with("v_interp_p1") {
+                let dst = match &inst.fields {
+                    Fields::Vintrp { dst, .. } => *dst,
+                    Fields::Valu(v) => v.dst.ok_or("an interpolation")?,
+                    _ => unreachable!(),
+                };
+                // The second half (`v_interp_p2*`) evaluates the whole
+                // attribute; it reads this register only as its accumulator.
+                // Any other reader, or a join, would take the zero as data.
+                if let Operand::Vector { reg, .. } = dst
+                    && let Some(w) = inst.write(Reg::V(reg))
+                {
+                    if self.read_past_interpolation(w) {
+                        return Err("the first half of an interpolation");
+                    }
+                    let z = self.s.m.i32(0);
+                    self.write(inst, Reg::V(reg), z, None);
+                }
+                return Ok(());
+            }
             return Err("the first half of an interpolation");
         };
         let name = inst.name();
