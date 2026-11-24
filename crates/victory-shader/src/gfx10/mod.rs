@@ -59,7 +59,7 @@ pub struct Instruction {
     /// [`name`] of `encoding` and `opcode`, resolved once at decode time.
     /// The translator asks about every instruction eight times; the table is
     /// a binary search.
-    name: Option<&'static str>,
+    pub(crate) name: Option<&'static str>,
 }
 
 impl Instruction {
@@ -296,7 +296,7 @@ fn instruction(code: &[u8], offset: usize) -> Result<Instruction, ShaderError> {
     })
 }
 
-fn name(encoding: Encoding, opcode: u16) -> Option<&'static str> {
+pub(crate) fn name(encoding: Encoding, opcode: u16) -> Option<&'static str> {
     use opcodes as t;
     let (table, op) = match encoding {
         Encoding::Sop2 => (t::SOP2, opcode),

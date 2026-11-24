@@ -5579,7 +5579,15 @@ impl<'a> Lower<'a> {
                 }
                 return Ok(());
             }
-            return Err("a descriptor read only as data");
+            // A descriptor's dwords read as numbers (its stride, count or
+            // format): no form stands for them. The registers hold nothing
+            // (`Missing`), so the instructions that compute with those
+            // numbers are dropped with them rather than the whole shader.
+            for &(_, w) in &inst.writes {
+                self.vals.insert(w, Val::Missing(OTHER));
+                self.stale.insert(w);
+            }
+            return Ok(());
         };
         let src = Source::Loaded { load: site, first };
         let used = self.used_kind(&src);

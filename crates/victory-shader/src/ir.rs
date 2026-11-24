@@ -437,6 +437,7 @@ fn unspill(
             encoding,
             opcode,
             words: vec![word],
+            name: gfx10::name(encoding, opcode),
         };
     };
     // `s_mov_b32` / `s_mov_b64 dst, src` (SOP1, opcodes 3 and 4); `s_nop`. A code
