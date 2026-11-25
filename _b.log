@@ -1,0 +1,75 @@
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7243:13
+     |
+7220 |             "v_cvt_f32_f64" => {
+     |             --------------- matches all the relevant values
+...
+7243 |             "v_cvt_f32_f64" => {
+     |             ^^^^^^^^^^^^^^^ no value can reach this
+     |
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7528:13
+     |
+7182 |             "v_permlane16_b32" | "v_permlanex16_b32" => {
+     |             ---------------------------------------- matches all the relevant values
+...
+7528 |             "v_permlanex16_b32" => {
+     |             ^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variant `FpExt` is never constructed
+   --> crates\victory-shader\src\emit\bitcode.rs:112:5
+    |
+103 | pub(crate) enum Cast {
+    |                 ---- variant in this enum
+...
+112 |     FpExt = 8,
+    |     ^^^^^
+    |
+    = note: `Cast` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `victory-shader` (lib) generated 3 warnings
+warning: unused import: `host::depth_bounds_test`
+   --> crates\victory-gpu\src\pipeline.rs:122:16
+    |
+122 | pub(crate) use host::depth_bounds_test;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `drop`
+   --> crates\victory-gpu\src\texture.rs:925:13
+    |
+925 |         let drop = self.layout.desc.mips.saturating_sub(self.mips);
+    |             ^^^^ help: if this is intentional, prefix it with an underscore: `_drop`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `recheck` is never used
+   --> crates\victory-gpu\src\descriptor\host.rs:414:8
+    |
+389 | impl TextureQueue {
+    | ----------------- method in this implementation
+...
+414 |     fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
+    |        ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `graphics_depth_bounds_pipeline` is never used
+   --> crates\victory-gpu\src\pipeline\host.rs:788:4
+    |
+788 | fn graphics_depth_bounds_pipeline(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `placed_filler_twins` is never used
+    --> crates\victory-gpu\src\resource.rs:2323:15
+     |
+2323 | pub(crate) fn placed_filler_twins() -> u64 {
+     |               ^^^^^^^^^^^^^^^^^^^
+
+warning: `victory-gpu` (lib) generated 5 warnings (run `cargo fix --lib -p victory-gpu` to apply 2 suggestions)
+   Compiling victory v0.1.0 (D:\victory-fx\apps\victory)
+    Finished `release` profile [optimized + debuginfo] target(s) in 3.43s

@@ -420,6 +420,31 @@ impl Xma {
             words = ?(0..10).map(|w| format!("{:08x}", context.get(w))).collect::<Vec<_>>(),
             "XMA voice enabled"
         );
+        // The first voices and the ones around an interaction: their input
+        // addresses and a fingerprint of the data, to tell a voice that
+        // plays another's bytes from one the title asked for.
+        {
+            static SAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+            let n = SAID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 256 || n.is_multiple_of(64) {
+                let in0 = context.get(5) as u64;
+                let packets = context.field(0, 0, 12);
+                let fp: u64 = heap_bytes(context.get(5) & !0x7ff, 16)
+                    .map(|d| d.iter().fold(0u64, |a, &b| a.wrapping_mul(131).wrapping_add(u64::from(b))))
+                    .unwrap_or(0);
+                tracing::info!(
+                    voice = n,
+                    index,
+                    in0 = format_args!("{in0:#x}"),
+                    packets,
+                    rate_48k = context.field(1, 27, 2),
+                    stereo = context.field(1, 29, 1),
+                    loop_count = context.field(0, 12, 8),
+                    fp = format_args!("{fp:016x}"),
+                    "XMA voice on"
+                );
+            }
+        }
         #[cfg(feature = "diagnostics")]
         dump_input(index, context);
         *slot = Some(Voice {
