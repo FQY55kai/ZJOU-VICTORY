@@ -1744,3 +1744,4 @@ fn permlanex16_reads_the_other_row() {
         assert_eq!(got, want, "{backend} case {i}: lane {lane}");
     });
 }
+}

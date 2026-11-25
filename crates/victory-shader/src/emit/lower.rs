@@ -6879,8 +6879,11 @@ impl<'a> Lower<'a> {
                 self.write_double(inst, r, guard)
             }
             "v_cvt_f32_f64" => {
-                let a = self.dsrc(inst, 0)?;
-                let r = self.s.m.cast(c, Cast::FpTrunc, a, self.s.t.f32);
+                // The IEEE form, with abs/neg modifiers (the software pair
+                // reads them; makeDouble alone would refuse them).
+                let (lo, hi) = self.f64_pair(inst, 0)?;
+                let bits = self.f64_to_f32_bits(lo, hi);
+                let r = self.as_float(bits);
                 float(self, r)
             }
             "v_cvt_f64_f32" => {
