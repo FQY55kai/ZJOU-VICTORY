@@ -530,6 +530,65 @@ console 的一个波是 64 车道。卡上只有 32 车道时，跨 64 车道的
 | `VICTORY_BVH_RESOLVE=0` | 只跑构建器、不造 1,000 个 resolve 程序；把首次开闸的验证从小时级压到 3 分钟 |
 | 实测数据 | 构建器 53 个、失败 3 个及其 hash 与偏移；`widen` 救回 33 个、被拒 14 次的原因 |
 
+### 2026-11-26 00:30 再看上游
+
+| 远程 | 头部 | 内容 |
+|---|---|---|
+| `origin/main`（Marvisak） | `67e8ae14` | `940d32f6` 之后又 **85 个提交**，绝大多数是 GPU 性能重构：页标记回读、纹理暂存池、单视图共享大拷贝缓冲、堆同步只处理变动槽位、D3D12 对象专用释放线程、快照池上限 512 MiB |
+| `dexnom/main` | `921d8d3b` | `Repair pixel quad sampling, grow ray buffer views, and recover sparse textures` —— 光追方向继续前进，仍在他们那棵树上 |
+| `looper/perf/nt-write-copy-back` | `6950319c` | copy back 1.5 s → 0.13 s（`NtWriteVirtualMemory`，不先 `VirtualQuery`）。**我们树里已有**，见第十一章 |
+| `looper/perf/copy-pool-stacked` | `8cce7801` | 拷贝线程池做快照与比对。依赖上游的页快照，拿不到 |
+| `looper/shaders/*` | `b00573d8` / `8996aeb8` | `v_readfirstlane` 地址下的 code-table 与 loop counter，属 waterfall 方向 |
+
+**两条直接关系到我们待办的上游提交**：
+
+- `4015a182 Shaders: quad reads in pixel programs reach the helpers at triangle edges` —— **上游自己实现了我们的 `VICTORY_QUAD_HELPERS`**。本树可以改用它，不必再挂环境变量。
+- `e8e9f0c2 Shaders: a lane mask joined with data at a uniform join is its number` 与 `4a3166e6 Shaders: lanes skipping a compare's region read 0 of its lane mask` —— lane mask 的两处修复，**有可能是 `f133e35e` 的解**（`a lane mask exchanged where not every lane runs`）。试挑过：4 处冲突，且依赖上游新建的 `read_phis` / `lane_edge` / `uniform_join` 结构，不是能顺手移植的，需要单独一轮。
+
+---
+
+## 十一、为什么移植版比原生贵这么多
+
+原生 Series X 的目标是 30 fps（标题自己按 33.3 ms 节流）。本机 4080 是世界场景 **5.0 fps / 200.7 ms**。不是"优化没做完"，而是**每一层都得替硬件做一遍它本来免费做的事**。下面全部取自 `run8.log` 稳态。
+
+### 200.7 ms 花在哪
+
+| 环节 | 每帧 | 原生对应 |
+|---|---|---|
+| 帧总长 | **200.7 ms** | 33.3 ms |
+| 命令录制（6 线程合计） | **149.1 ms**，35,766 次 list 调用 | ≈0：console 的 command processor 是硬件，绘制包直接进队列 |
+| GPU 执行 | **103.3 ms** | ≈33 ms |
+| title 内存 → 宿主副本 | **45.9 ms / 122.9 MB** | 0：统一内存 |
+| 宿主副本 → title 内存（回写） | **40.9 ms / 42.5 MB** | 0 |
+| 视图堆整堆扫描 | 15.6 ms | 0 |
+| 绘制 | 4,544 次，另有 343 次丢弃 + 637 次间接 | 硬件批量，且不校验 |
+
+各项重叠（多线程录制与 GPU 并行），不能相加。
+
+### 多出来的部分，按代价排序
+
+1. **每一条绘制都要在 CPU 上重放。** console 的绘制包由硬件直接消费；我们要把 4,544 条解成 D3D12 调用，每条校验根签名、绑描述符表（每帧 **11,224 张**）、设状态、记 list。这就是那 149 ms。**原生这条是 0。**
+2. **描述符要重建。** console 的 shader 直接拿 GPU 虚拟地址读描述符（bindless by address）；host 堆布局不同，必须把 title 内存里的描述符翻译进 host 堆：每帧 1,082 次视图写入 + 那 11,224 张表。
+3. **内存要镜像两遍。** console 统一内存，shader 写哪 CPU 立刻看得见。我们要维持 title 内存的宿主副本：检测 shader 写了哪些页（每帧比对 23.9 MB），把变的拷回去（42.5 MB）；反方向 title 写纹理，还要读出来解瓦上传（122.9 MB）。**往返 165 MB/帧、87 ms/帧，纯属翻译成本。**
+4. **GPU 本身也慢 3 倍。** console 的波是 64 车道，4080 在 D3D12 下只有 32（`min=32 max=32`）：每个 wave64 计算程序要拆成两个 host wave 再用 LDS 交换，指令数最多翻倍；而且我们发射的 DXIL 远不如 AMD 编译器优化的产物。
+5. **显存不够，数据一直在搬家。** 16 GB 的卡上预算只有 **10.2 GB**，`in use 97%`（9,974/10,282 MB）；**35,261 张 title 纹理没有宿主副本（14.6 GB 的 title 内存）**，一个 run 里 **1,669 次**因为没地方而没做出来。原生只有一份数据；我们同时持有 title 内存映像 + 宿主副本 3.5 GB + 卡上宿主纹理 8.1 GB + 卡上副本 928 MB，**进程私有 23.8 GB**（常驻 10.9 GB）。
+
+一句话：**native 是"零拷贝 + 硬件描述符 + 原生 64 波 + 一份内存"；我们是"三份内存 + 每帧 165 MB 往返 + CPU 重放 4,544 条绘制 + 32 波模拟"。** 差距不是系数，是这五项各自乘上去的结果。
+
+### 已试过但无效的（省得再试一遍）
+
+| 想法 | 实测 |
+|---|---|
+| 用 `NtReadVirtualMemory` 替掉 `ReadProcessMemory`，抄 Looper 在写侧的成功 | **无意义**：Vista 之后 `ReadProcessMemory` 本身就是 `NtReadVirtualMemory` 的薄壳；写侧之所以有用是因为 `WriteProcessMemory` 会先 `NtQueryVirtualMemory`。我们树的 `VICTORY_DIRECT_WRITES`（写侧）与 `VICTORY_COPY_ASK`（不预先 `VirtualQuery`）**都已默认开着**，Looper 那两个 perf 分支的内容我们早就有 |
+| 用 `IDXGIAdapter3::SetVideoMemoryReservation` 把预算从 10.2 GB 抬到 15.7 GB（日志写着"5741 MB could still be reserved"） | **无效**：预留给的是**下限**（保证不被别人挤掉），不会把预算抬到系统已经给的额度之上。实测 `reserved_mb=2870 ok=true` 之后 `budget` 仍 9,631 MB，帧率与"no room"计数无变化。代码已撤 |
+| `VICTORY_TEXTURE_ROOM_PERCENT=94`（代码注释自己推荐的值：90 时"1,020 MB 空着，同时上千张纹理在等"） | **更慢**。同绘制数（约 4,960）对照：90 时 **188.8–207.8 ms**，94 时 **233–239 ms**，贵约 25 ms/帧（−12%）。原因就在账本里：显存用得多→每帧搬得更多，`copies` 122.9→**153.2 MB**、`copying back` 42.5→**66.6 MB**。默认仍是 90 |
+
+### 真要往下压，只有三条
+
+1. **拿上游的 GPU 侧重构**（那 85 个提交）：页标记回读（`cd94d353`，正是 42.5 MB 回写与 23.9 MB 比对的替代）、单视图共享大拷贝缓冲（`6cc6aa35`）、堆同步只处理变动槽位（`f8095210`、`29221419`）、纹理暂存池（`fdf34ab7`）。这是唯一能动第 1、3 项成本的东西，代价是那次 411 冲突的合并。
+2. **`VICTORY_INPLACE` 全量**（把 title 内存直接当显卡堆用，少一份副本）：本树只有第一阶段。
+3. **换 AMD 卡**：第 4 项成本（wave64 模拟翻倍的指令数）直接消失。
+
 ---
 
 ## 构建与运行
