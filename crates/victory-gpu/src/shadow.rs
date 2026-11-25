@@ -159,6 +159,22 @@ fn card_limits() -> (u64, u64) {
     })
 }
 
+/// The share of the card's budget, in percent, up to which the card sides
+/// of title buffer copies are placed (`card_for`): 95 unless
+/// `VICTORY_CARD_ROOM_PERCENT` says another (50 to 99). Above the texture
+/// queue's own share (`resource::room`'s 90 by default): copies are
+/// resident and searched every frame, textures can be dropped and uploaded
+/// again, so the copies get the card's room first.
+fn card_room_percent() -> u64 {
+    static PERCENT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *PERCENT.get_or_init(|| {
+        std::env::var("VICTORY_CARD_ROOM_PERCENT")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map_or(95, |percent| percent.clamp(50, 99))
+    })
+}
+
 /// Bytes alive of copies' card sides, and of their "before" twins.
 static CARD_BYTES: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 
@@ -206,14 +222,16 @@ fn card_for(size: u64) -> Option<ID3D12Resource> {
     if !host.card_ready() {
         return None;
     }
-    // Only while the card has room: with this copy on it, a fifth of the
-    // budget the system gives us must still be free. Copies are made when
-    // the world loads, before the textures fill the card; the texture
-    // queue's own rule (`resource::room`: nine tenths of the budget) counts
-    // them, so the card's use stays where it was and the textures' share
-    // shrinks by the copies' bytes, at most `card_limits`' second number.
+    // Only while the card has room: with this copy on it, the share of the
+    // budget the system gives us under `card_room_percent` must still be
+    // free. Copies are made when the world loads, before the textures fill
+    // the card; the texture queue's own rule (`resource::room`) counts
+    // them. The copies' share is higher than the textures' (95 against 90
+    // by default): a copy's bytes are resident and searched every frame,
+    // while a texture can be dropped and uploaded again, so the copies take
+    // the card's room first and the textures keep what is left.
     if let Some([budget, used, ..]) = host.video_memory()
-        && used + size > budget / 10 * 8
+        && used + size > budget / 100 * card_room_percent()
     {
         return None;
     }
