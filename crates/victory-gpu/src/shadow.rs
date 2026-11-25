@@ -1629,6 +1629,20 @@ pub(crate) fn merged_stats() -> [u64; 3] {
 /// (offset, bytes) in order: every differing byte is in a run and no equal
 /// byte is.
 fn changed_runs(now: &[u8], was: &[u8]) -> Vec<(usize, usize)> {
+    changed_runs_within(now, was, 0)
+}
+
+/// How many equal bytes between two runs of changes are taken in with them
+/// when the runs are copied to the card's side. Copying a byte that did not
+/// change costs nothing (it is written with the value it already had), and
+/// a page whose changes come in thousands of two-byte pieces would
+/// otherwise cost a copy and a range sent to the card for each of them: run
+/// 6 put 56,440 runs a frame in for 0.15 MB, about 2.8 bytes a run.
+const JOIN_WITHIN: usize = 16;
+
+/// [`changed_runs`], with runs `gap` or fewer equal bytes apart taken as
+/// one run. `gap` of 0 is the exact answer.
+fn changed_runs_within(now: &[u8], was: &[u8], gap: usize) -> Vec<(usize, usize)> {
     let n = now.len().min(was.len());
     let mut runs = Vec::new();
     let mut i = 0;
@@ -1644,8 +1658,21 @@ fn changed_runs(now: &[u8], was: &[u8]) -> Vec<(usize, usize)> {
             break;
         }
         let first = i;
-        while i < n && now[i] != was[i] {
-            i += 1;
+        loop {
+            while i < n && now[i] != was[i] {
+                i += 1;
+            }
+            // Another change within `gap` bytes of this one: take the equal
+            // bytes in and go on.
+            let stop = (i + gap).min(n);
+            let mut j = i;
+            while j < stop && now[j] == was[j] {
+                j += 1;
+            }
+            if j >= stop {
+                break;
+            }
+            i = j;
         }
         runs.push((first, i - first));
     }
@@ -1654,7 +1681,7 @@ fn changed_runs(now: &[u8], was: &[u8]) -> Vec<(usize, usize)> {
 
 #[cfg(test)]
 mod merge_tests {
-    use super::{PIECE, back_piece, changed_runs};
+    use super::{PIECE, back_piece, changed_runs, changed_runs_within};
 
     /// A piece put back takes the GPU's bytes where the copy changed and
     /// the title's everywhere else, reads and writes title memory only from
@@ -1766,6 +1793,27 @@ mod merge_tests {
             assert!(runs.windows(2).all(|w| w[0].0 + w[0].1 < w[1].0), "{changes:?}");
         }
         assert!(changed_runs(&[], &[]).is_empty());
+    }
+
+    /// Joining takes in the equal bytes between changes that are close, and
+    /// never those that are far: what is copied is what the card changed,
+    /// with a few equal bytes around it.
+    #[test]
+    fn runs_join_over_small_gaps_only() {
+        let was = vec![0u8; 64];
+        // Two changes 4 bytes apart, and one 20 bytes after the second.
+        let mut now = was.clone();
+        for &at in &[10usize, 14, 34] {
+            now[at] = 9;
+        }
+        assert_eq!(changed_runs(&now, &was), vec![(10, 1), (14, 1), (34, 1)]);
+        assert_eq!(changed_runs_within(&now, &was, 0), changed_runs(&now, &was));
+        // 4 bytes between the first two (taken in), 19 between the next two.
+        assert_eq!(changed_runs_within(&now, &was, 16), vec![(10, 5), (34, 1)]);
+        // Every equal byte in, one run for all three.
+        assert_eq!(changed_runs_within(&now, &was, 32), vec![(10, 25)]);
+        // Nothing changed is still nothing.
+        assert!(changed_runs_within(&was, &was, 16).is_empty());
     }
 }
 
@@ -2714,7 +2762,7 @@ impl Shadow {
                     // SAFETY: inside the mapping of the copy's CPU side,
                     // which only the submitting thread writes.
                     let held = unsafe { std::slice::from_raw_parts_mut(self.data.add(at), n) };
-                    let runs = changed_runs(title, held);
+                    let runs = changed_runs_within(title, held, JOIN_WITHIN);
                     if runs.len() > *runs_left {
                         return true;
                     }
@@ -2733,7 +2781,7 @@ impl Shadow {
                     // bytes at the copy's offsets (`writing`), and these
                     // are in a declared range.
                     let held = unsafe { std::slice::from_raw_parts_mut(snapshot.as_mut_ptr().add(at), n) };
-                    for (r, m) in changed_runs(title, held) {
+                    for (r, m) in changed_runs_within(title, held, JOIN_WITHIN) {
                         // SAFETY: inside the copy's mapping. The card may be
                         // writing the copy beside these bytes; they are
                         // written here and nothing around them.
