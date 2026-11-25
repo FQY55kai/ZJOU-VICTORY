@@ -105,17 +105,34 @@ struct KeyState {
 
 const _: () = assert!(size_of::<KeyState>() == 12 && size_of::<PadState>() == 28);
 
+/// The mouse, as the stand-in pad reads it: movement goes to the right
+/// stick (the camera), the buttons to triggers and A. Movement decays
+/// between readings, so the camera stops when the mouse does.
+#[derive(Clone, Copy, Debug, Default)]
+struct MouseState {
+    /// Right stick, -1 to 1.
+    x: f32,
+    y: f32,
+    left: bool,
+    right: bool,
+    middle: bool,
+}
+
 /// Host input, or a fake in tests.
 trait Source: Send {
     /// The pad in host slot `slot`, `None` when the slot is empty.
     fn pad(&mut self, slot: usize) -> Option<PadState>;
     /// Keys held down; none while the title's window lacks focus.
     fn keys(&mut self) -> Vec<KeyState>;
+    /// The mouse; nothing where the host has none.
+    fn mouse(&mut self) -> MouseState {
+        MouseState::default()
+    }
     /// Motor speeds: low frequency (left), high frequency (right).
     fn rumble(&mut self, slot: usize, low: u16, high: u16);
 }
 
-fn fallback(keys: &[KeyState]) -> PadState {
+fn fallback(keys: &[KeyState], mouse: MouseState) -> PadState {
     let on = |vk: u8| {
         if keys.iter().any(|k| k.virtual_key == vk) {
             1.0
@@ -123,17 +140,24 @@ fn fallback(keys: &[KeyState]) -> PadState {
             0.0
         }
     };
+    let buttons = FALLBACK_BUTTONS
+        .iter()
+        .filter(|(vk, _)| on(*vk) != 0.0)
+        .fold(0, |all, (_, bit)| all | bit);
+    // The mouse's own buttons: left fires (right trigger), right aims (left
+    // trigger), the middle one is A (interact, confirm).
+    let buttons = buttons | if mouse.middle { A } else { 0 };
+    let triggers = |key: u8, held: bool| if held { 1.0 } else { on(key) };
     PadState {
-        buttons: FALLBACK_BUTTONS
-            .iter()
-            .filter(|(vk, _)| on(*vk) != 0.0)
-            .fold(0, |all, (_, bit)| all | bit),
-        left_trigger: on(b'Z'),
-        right_trigger: on(b'C'),
+        buttons,
+        left_trigger: triggers(b'Z', mouse.right),
+        right_trigger: triggers(b'C', mouse.left),
         left_x: on(b'D') - on(b'A'),
         left_y: on(b'W') - on(b'S'),
-        right_x: on(b'L') - on(b'J'),
-        right_y: on(b'I') - on(b'K'),
+        // The mouse turns the camera when it moved this reading; the keys
+        // otherwise.
+        right_x: if mouse.x != 0.0 { mouse.x } else { on(b'L') - on(b'J') },
+        right_y: if mouse.y != 0.0 { mouse.y } else { on(b'I') - on(b'K') },
     }
 }
 
@@ -401,12 +425,14 @@ impl Hub {
 
     /// Reads the host once; device callbacks run on the calling thread.
     fn poll(&self) {
-        let (pads, keys) = {
+        let (pads, keys, mouse) = {
             let mut source = lock(&self.source);
             let pads: [_; PADS] = std::array::from_fn(|slot| source.pad(slot));
-            (pads, source.keys())
+            let keys = source.keys();
+            let mouse = source.mouse();
+            (pads, keys, mouse)
         };
-        let events = self.state().poll(&self.devices, pads, keys);
+        let events = self.state().poll(&self.devices, pads, keys, mouse);
         self.deliver(events);
     }
 
@@ -451,6 +477,7 @@ impl State {
         devices: &[Device; DEVICES],
         pads: [Option<PadState>; PADS],
         keys: Vec<KeyState>,
+        mouse: MouseState,
     ) -> Vec<Event> {
         let now = now();
         let mut events = std::mem::take(&mut self.pending);
@@ -458,7 +485,7 @@ impl State {
         for (slot, pad) in pads.into_iter().enumerate() {
             self.update(devices, slot, pad.map(Value::Pad), now, &mut events);
         }
-        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys)));
+        let fallback = (!any_pad).then(|| Value::Pad(fallback(&keys, mouse)));
         self.update(devices, FALLBACK, fallback, now, &mut events);
         self.update(devices, KEYBOARD, Some(Value::Keys(keys)), now, &mut events);
         events
@@ -1073,6 +1100,7 @@ mod host {
     use std::time::{Duration, Instant};
 
     use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW,
     };
@@ -1085,7 +1113,7 @@ mod host {
         XInputSetState,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
+        GetCursorPos, GetForegroundWindow, GetWindowThreadProcessId,
     };
 
     use super::*;
@@ -1130,6 +1158,11 @@ mod host {
     #[derive(Default)]
     pub(super) struct Host {
         empty_until: [Option<Instant>; PADS],
+        /// Where the cursor was at the last reading.
+        cursor: Option<(i32, i32)>,
+        /// The right stick the mouse's movement left there: it holds the
+        /// last few readings, then decays to the centre.
+        stick: (f32, f32),
     }
 
     impl Source for Host {
@@ -1186,6 +1219,41 @@ mod host {
                     ..Default::default()
                 })
                 .collect()
+        }
+
+        fn mouse(&mut self) -> MouseState {
+            if !focused() {
+                self.cursor = None;
+                self.stick = (0.0, 0.0);
+                return MouseState::default();
+            }
+            let mut at = POINT::default();
+            // SAFETY: room for the point; plain query.
+            if unsafe { GetCursorPos(&mut at) } == 0 {
+                return MouseState::default();
+            }
+            let (dx, dy) = match self.cursor.replace((at.x, at.y)) {
+                Some((x, y)) => ((at.x - x) as f32, (at.y - y) as f32),
+                None => (0.0, 0.0),
+            };
+            // Readings come every few milliseconds: the stick holds this
+            // movement and the last few, then falls back to the centre, so
+            // the camera stops when the mouse does. Y is up-positive.
+            const SENSITIVITY: f32 = 0.05;
+            self.stick.0 = (self.stick.0 * 0.5 + dx * SENSITIVITY).clamp(-1.0, 1.0);
+            self.stick.1 = (self.stick.1 * 0.5 - dy * SENSITIVITY).clamp(-1.0, 1.0);
+            // Below this the title would turn on noise of the cursor's own.
+            let dead = |v: f32| if v.abs() < 0.004 { 0.0 } else { v };
+            // SAFETY: plain queries; virtual keys 1, 2 and 4 are the mouse's
+            // left, right and middle buttons.
+            let held = |vk: i32| unsafe { GetAsyncKeyState(vk) } < 0;
+            MouseState {
+                x: dead(self.stick.0),
+                y: dead(self.stick.1),
+                left: held(0x01),
+                right: held(0x02),
+                middle: held(0x04),
+            }
         }
 
         fn rumble(&mut self, slot: usize, low: u16, high: u16) {
