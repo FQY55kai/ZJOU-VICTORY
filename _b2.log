@@ -1,0 +1,106 @@
+   Compiling victory-shader v0.1.0 (D:\victory-fx\crates\victory-shader)
+   Compiling windows-core v0.62.2
+   Compiling victory-core v0.1.0 (D:\victory-fx\crates\victory-core)
+   Compiling windows-collections v0.3.2
+   Compiling windows-numerics v0.3.1
+   Compiling windows-future v0.3.2
+   Compiling victory-pipeline v0.1.0 (D:\victory-fx\crates\victory-pipeline)
+   Compiling victory-loader v0.1.0 (D:\victory-fx\crates\victory-loader)
+   Compiling windows v0.62.2
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7356:13
+     |
+6838 |             "v_permlane16_b32" | "v_permlanex16_b32" => {
+     |             ---------------------------------------- matches all the relevant values
+...
+7356 |             "v_permlane16_b32" | "v_permlanex16_b32" => {
+     |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+     |
+     = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7394:13
+     |
+6881 |             "v_cvt_f32_f64" => {
+     |             --------------- matches all the relevant values
+...
+7394 |             "v_cvt_f32_f64" => {
+     |             ^^^^^^^^^^^^^^^ no value can reach this
+
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7417:13
+     |
+6881 |             "v_cvt_f32_f64" => {
+     |             --------------- matches all the relevant values
+...
+7417 |             "v_cvt_f32_f64" => {
+     |             ^^^^^^^^^^^^^^^ no value can reach this
+
+warning: unreachable pattern
+    --> crates\victory-shader\src\emit\lower.rs:7708:13
+     |
+6838 |             "v_permlane16_b32" | "v_permlanex16_b32" => {
+     |             ---------------------------------------- matches all the relevant values
+...
+7708 |             "v_permlanex16_b32" => {
+     |             ^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: unused variable: `dst`
+   --> crates\victory-shader\src\emit\wave.rs:327:30
+    |
+327 |         if let Fields::Sop { dst, src, .. } = &inst.fields {
+    |                              ^^^ help: try ignoring the field: `dst: _`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `Red64F` is never constructed
+   --> crates\victory-shader\src\emit\wave.rs:123:5
+    |
+106 | pub(crate) enum Sym {
+    |                 --- variant in this enum
+...
+123 |     Red64F {
+    |     ^^^^^^
+    |
+    = note: `Sym` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling victory-gpu v0.1.0 (D:\victory-fx\crates\victory-gpu)
+warning: unused import: `host::depth_bounds_test`
+   --> crates\victory-gpu\src\pipeline.rs:122:16
+    |
+122 | pub(crate) use host::depth_bounds_test;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `drop`
+    --> crates\victory-gpu\src\texture.rs:1175:13
+     |
+1175 |         let drop = self.layout.desc.mips.saturating_sub(self.mips);
+     |             ^^^^ help: if this is intentional, prefix it with an underscore: `_drop`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `recheck` is never used
+   --> crates\victory-gpu\src\descriptor\host.rs:591:8
+    |
+566 | impl TextureQueue {
+    | ----------------- method in this implementation
+...
+591 |     fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
+    |        ^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `graphics_depth_bounds_pipeline` is never used
+   --> crates\victory-gpu\src\pipeline\host.rs:853:4
+    |
+853 | fn graphics_depth_bounds_pipeline(
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+   Compiling victory-hle v0.1.0 (D:\victory-fx\crates\victory-hle)
+warning: `victory-shader` (lib) generated 6 warnings (run `cargo fix --lib -p victory-shader` to apply 1 suggestion)
+warning: `victory-gpu` (lib) generated 4 warnings (run `cargo fix --lib -p victory-gpu` to apply 2 suggestions)
+   Compiling victory v0.1.0 (D:\victory-fx\apps\victory)
+    Finished `release` profile [optimized + debuginfo] target(s) in 34.04s
