@@ -1,6 +1,6 @@
-# ztrx
+# ZJOU-VICTORY
 
-**ztrx** runs the Xbox Series build of the game natively on Windows PCs with
+**ZJOU-VICTORY** runs the Xbox Series build of the game natively on Windows PCs with
 NVIDIA graphics cards, from game files you supply yourself.
 
 **This repository contains no game files or assets.** You need your own copy

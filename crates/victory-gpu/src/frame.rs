@@ -39,6 +39,26 @@ fn clock() -> std::sync::MutexGuard<'static, Option<Clock>> {
     CLOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// A run's own frame interval, from `VICTORY_FRAME_INTERVAL` (microseconds;
+/// `0` or `uncapped` paces at half a millisecond, so the title's waits end
+/// at once and the frame rate is whatever the machine reaches). Off by
+/// default: the title's choice stands.
+fn forced_interval() -> Option<Duration> {
+    static FORCED: std::sync::OnceLock<Option<Duration>> = std::sync::OnceLock::new();
+    FORCED
+        .get_or_init(|| {
+            std::env::var_os("VICTORY_FRAME_INTERVAL").map(|v| {
+                let text = v.to_string_lossy();
+                let us = match text.trim() {
+                    "0" | "uncapped" => 500,
+                    t => t.parse::<u64>().unwrap_or(16_667),
+                };
+                Duration::from_micros(us.max(100))
+            })
+        })
+        .clone()
+}
+
 /// Device method: a frame every `length` microseconds. The period is how
 /// many intervals a frame may take to reach the display (pipeline depth),
 /// not part of the rate.
@@ -49,9 +69,16 @@ pub(crate) extern "system" fn set_interval(
     _period: u32,
     _flags: u32,
 ) -> HRESULT {
-    let interval = match length {
-        0 => SIXTIETH,
-        us => Duration::from_micros(u64::from(us)),
+    let forced = forced_interval();
+    let interval = match forced {
+        Some(forced) => {
+            tracing::info!(?forced, title = ?Duration::from_micros(u64::from(length.max(1))), "frame interval forced");
+            forced
+        }
+        None => match length {
+            0 => SIXTIETH,
+            us => Duration::from_micros(u64::from(us)),
+        },
     };
     tracing::info!(?interval, "frame interval");
     // A new interval starts from now, after the last tick handed out.
