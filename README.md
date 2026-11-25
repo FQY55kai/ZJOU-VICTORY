@@ -102,7 +102,7 @@
 | hash 对比遍数 | 121-146 遍 | 合并运行（compare 15→4） | `VICTORY_CARD_REHASH_RUNS` 默认开 |
 | 着色器翻译失败 | 13 条 | **2 条** | 我们的 descriptor/f64/interp 修复 + 上游 |
 
-> 2026-11-25 夜 `477c395a` 进一步到 **172–218 ms / 5.8 fps**（合并 LooperSalty `80d58f8` 27 提交：DirectStorage 物理页通知、COPY 队列卡上拷贝、depth bounds 直通）。逐环节开销、优化方法与目标见 **4.5 账本**。
+> 2026-11-25 夜 `477c395a` 进一步到 **151–239 ms / 4.2–6.6 fps**（视场景 4400–6600 draws；空闲段最好 172 ms / 5.8 fps）。合并 LooperSalty `80d58f8` 27 提交：DirectStorage 物理页通知、COPY 队列卡上拷贝、depth bounds 直通。逐环节开销、优化方法与目标见 **4.5 账本**。
 
 ### 4.3 稳定性
 
