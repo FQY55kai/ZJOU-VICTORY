@@ -397,6 +397,7 @@ impl TextureQueue {
         }
         self.writes += 1;
         let write = self.writes;
+        self.rechecks.remove(&index);
         self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
     }
 
@@ -410,6 +411,13 @@ impl TextureQueue {
     /// it was written again meanwhile and waits in the queue.
     /// Up to `max` of the slots whose next look is due at `frame`, the ones
     /// due longest first.
+    fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
+        if !self.slots.contains_key(&index) {
+            let due = frame + RECHECK_FRAMES[0];
+            self.rechecks.insert(index, Recheck { due, at, print, looks: 0, uploaded: frame });
+        }
+    }
+
     fn rechecks_due(&self, frame: u64, max: usize) -> Vec<(u32, Recheck)> {
         let mut due: Vec<(u32, Recheck)> = self
             .rechecks
@@ -514,7 +522,7 @@ impl TextureQueue {
     /// title that fills a texture's memory after it wrote the view (the
     /// `looks`-th such look; `uploaded` is the upload's frame).
     #[allow(clippy::too_many_arguments)]
-    fn recheck(&mut self, index: u32, write: u64, due: u64, at: (u64, u64), print: u64, looks: u8, uploaded: u64) {
+    fn recheck_looks(&mut self, index: u32, write: u64, due: u64, at: (u64, u64), print: u64, looks: u8, uploaded: u64) {
         if let Some(w) = self.same(index, write) {
             (w.due, w.looks, w.mapped) = (due, 1, 0);
             w.checked = (at.0, at.1, print, looks, uploaded);
@@ -535,6 +543,7 @@ impl TextureQueue {
         self.writes += 1;
         let write = self.writes;
         let due = self.slots.get(&index).map_or(due, |w| w.due.min(due));
+        self.rechecks.remove(&index);
         self.slots.insert(index, Waiting { due, written: frame, write, looks: 0, mapped: 0, checked: (0, 0, 0, 0, 0) });
     }
 
@@ -1023,7 +1032,7 @@ impl HostHeap {
         uploaded: u64,
     ) {
         let mut textures = self.textures.lock().unwrap_or_else(|e| e.into_inner());
-        textures.recheck(index, write, due, at, print, looks, uploaded);
+        textures.recheck_looks(index, write, due, at, print, looks, uploaded);
     }
 
     /// See [`TextureQueue::checked`].

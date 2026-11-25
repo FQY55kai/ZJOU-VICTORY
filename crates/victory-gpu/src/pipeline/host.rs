@@ -190,7 +190,7 @@ impl GraphicsState {
             })
             .collect();
         // (Pipelines without the test keep the names they had.)
-        let bounds = if self.bounds { " bounds" } else { "" };
+        let bounds = if self.bounds { " depth-bounds" } else { "" };
         format!(
             "{:?} {} {:?} {:?} {inputs:?} {} {} {:?} {} {:?}{bounds}",
             self.blend,
