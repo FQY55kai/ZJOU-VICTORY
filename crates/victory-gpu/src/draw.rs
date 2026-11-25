@@ -2972,7 +2972,12 @@ impl State {
         let why = |what: &str| crate::pipeline::note_why(format!("indirect kind {kind}: {what}"));
         #[cfg(not(feature = "diagnostics"))]
         let why = |_: &str| {};
+        // A call with no host pipeline cannot run, and that is the common
+        // case while the world builds its pipelines (1 400-1 750 a frame):
+        // dropped here, before the argument refresh and the clamp dispatch
+        // that would copy and dispatch for records nothing reads.
         let Some(p) = crate::pipeline::host_pipeline(self.pipeline as This) else {
+            why("no host pipeline");
             #[cfg(feature = "diagnostics")]
             crate::pipeline::note_drop(self.pipeline as This);
             return false;
