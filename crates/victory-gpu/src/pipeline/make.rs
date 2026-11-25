@@ -75,10 +75,17 @@ fn too_dear(shaders: &[Arc<Shader>]) -> bool {
 /// at the world's first frame, each 5 to 9 s of AMD's compiler. They stood in
 /// the queue before the passes that make the picture, and with the structure
 /// builder off there is no hit to shade.
-/// `VICTORY_RT_RESOLVE=1` makes them, as does the builder being on.
+/// `VICTORY_RT_RESOLVE=1` makes them, as does the builder being on;
+/// `VICTORY_BVH_RESOLVE=0` holds them back while the builder its own self
+/// runs, which is the first run worth making: the builder is 52 programs and
+/// the resolve set is about 1,000.
 fn without_structures(shaders: &[Arc<Shader>]) -> bool {
     static MADE: OnceLock<bool> = OnceLock::new();
     let on = |name| std::env::var_os(name).is_some_and(|v| v == "1");
+    let off = |name| std::env::var_os(name).is_some_and(|v| v == "0");
+    if off("VICTORY_BVH_RESOLVE") {
+        return named(shaders, b"CS_RaytracingResolve");
+    }
     let made = *MADE.get_or_init(|| on("VICTORY_RT_RESOLVE") || on("VICTORY_BVH_BUILDER"));
     !made && named(shaders, b"CS_RaytracingResolve")
 }

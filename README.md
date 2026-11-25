@@ -194,6 +194,8 @@
 | `VICTORY_AMBIENT` | 间接漫反射光常量（0=全黑，`off`=保留原输出） | 默认 `0.6`；觉得偏亮可下调 |
 | `VICTORY_BVH_BUILDER` | **开光追构建器**（标题 52 个 BVH 构建程序 + 约 1,000 个 resolve 程序） | 默认 `0`；开闸首跑要多编译 1.4–2.5 小时，见第十章 |
 | `VICTORY_BVH_QUARANTINE` | 构建器产出只留宿主副本、不回写 title 内存 | 首次开闸配 `VICTORY_BVH_BUILDER=1` 用，防写坏 title 对象 |
+| `VICTORY_BVH_RESOLVE=0` | 构建器开着时**先不造**那约 1,000 个 resolve 程序 | 首次验证构建器专用，把 1.4–2.5 小时压到 3 分钟 |
+| `VICTORY_WAVE_WIDE` | 打开 `widen()`（发散分支整波一起走） | **默认 `0`；`=1` 实测会挂卡，别开**（见第十章） |
 | `VICTORY_RT_RESOLVE` | 单独造 resolve 管线（不开构建器时它们没有命中可着色，纯浪费） | 默认 `0` |
 | `VICTORY_WAVE_WHY` | 打印 wave64 重试每一步（`own_bits` / `WAVE64-WIDE`） | 诊断光追翻译时开 |
 | `victory warm` | 着色器预热 | 更新构建后跑一次 |
@@ -443,7 +445,7 @@ fn builder_runs() -> bool {
 }
 ```
 
-门上的注释写着解锁条件："**直到遍历结构的程序能翻译**"。而按上面查证，遍历程序（`intersect.rs` + `own_bits.rs` + `wave64_tests.rs`）**现在能翻译了**——前提已满足，门却还锁着。
+门上的注释写着解锁条件："**直到遍历结构的程序能翻译**"。而按上面查证，遍历程序（`intersect.rs` + `own_bits.rs` + `wave64_tests.rs`）**确实能翻译**——所以门的前提看上去满足了，才值得实际开一次。**实测结果是：遍历程序能翻，构建器还差 3 个**（见下一节）。
 
 配套的诊断开关也在，正是为首次开闸准备的：
 
@@ -471,12 +473,62 @@ fn builder_runs() -> bool {
 
 `relay/flight`（`VICTORY_RELAY=1` 独立回读线程）在这棵树上**没有对应物**——上游有自己的多 flight 实现，要做得端到端重做，不在本轮范围。
 
-### 下一步（按证据排序）
+### 开闸实测（2026-11-26 00:15–00:25）：53 个程序里 3 个翻译不出，而这道墙在这张卡上过不去
 
-1. **开闸试一次**：主树上 `VICTORY_BVH_BUILDER=1 VICTORY_BVH_QUARANTINE=1 VICTORY_WAVE_WHY=1` 跑序章。预算好时间：首次进世界要多编译约 1,000 个 resolve 程序（1.4–2.5 小时），第二次启动走缓存为 0。观察 ① 构建器全部程序是否造出管线（`builder_off` 会打印 `missing` / `of`）② `WAVE64-WIDE` / `own_bits` 走到哪一步 ③ 有没有 `DEVICE_HUNG`。这是唯一能把"78%"变成我们自己的数据的动作。
-2. 若构建器跑通但画面仍黑：问题在结果回读（`VICTORY_BVH_QUARANTINE` 会让 title 读不到尺寸/计数器），按 `pipeline.rs` 注释的提示逐级放开。
-3. 若某几个构建程序翻译不出：`VICTORY_WAVE_WHY=1` 会给出它停在哪种形式，再决定补 `without_skips(deep)` 还是 `widen`。
-4. 若 1,000 个 resolve 程序的编译时间不可接受：上游的 `WaveSize=64` 路线（`lower/bvh.rs`）不模拟车道、翻译快，代价是只在这台卡支持 wave64 时可用——可作为第二条腿，按 `VICTORY_*` 开关二选一。
+先加了一个开关把两件事拆开：`VICTORY_BVH_RESOLVE=0` 只跑构建器、不造那 1,000 个 resolve 程序。**验证时间从预估的 1.4–2.5 小时压到 3 分钟**（`pipeline/make.rs::without_structures`）。
+
+`VICTORY_BVH_BUILDER=1 VICTORY_BVH_QUARANTINE=1 VICTORY_BVH_RESOLVE=0 VICTORY_WAVE_WHY=1` 跑两次（`rt1`、`rt2`）：
+
+```
+host wave lanes min=32 max=32
+the ray-tracing structure builder stays off: not all of its programs have a host pipeline,
+and its stages run all or none    missing=3 of=53
+```
+
+**构建器实为 53 个程序**（文档写 52），其中 3 个翻译不出，all-or-none 规则让整批关闭：
+
+| 着色器 | 规模 | 报错 |
+|---|---|---|
+| `b22a16a1` | 28–56 次/帧 | `0x22c: a wave sum of 16-bit floats where not every lane runs` |
+| `f133e35e` | 69,384 字节，0.2–2 次/帧 | `0x1eb4: a lane mask exchanged where not every lane runs` |
+| `ceb5eb68` | 早期一次 | `0x38: a descriptor's address or format read as data` |
+
+重试机制确实在跑（944 条 `WAVE64-*` 记录）：`without early-outs`、`without skips`、`without skips, scalars followed`、`local waves (idiom)`、`local waves (APPROXIMATE)` 全部试过，都停在同一处。
+
+**`VICTORY_WAVE_WIDE=1` 打开 `widen()` 后**：救回 **33 个**程序（返回 `wave Some(32)`，即不再要求 64 车道），但构建器那 3 个仍然不行——`widen` 被拒 14 次，理由统一是：
+
+```
+WAVE64-WIDE not tried: thread groups of [256, 1, 1]
+WAVE64-RETRY wave-wide branches: wave-wide branches in a thread group of several console waves
+```
+
+而且这次运行在进世界约 2.5 分钟后**整机静默**（进程活着、占用 15.8 GB），同样时长下不开 `VICTORY_WAVE_WIDE` 的 `rt1` 没有这个现象——与 `mod.rs:404` 那段注释（"runs 121–124 lost the card … `ptfx_CS_lightAtlas_Sprite` 和 `_Trail`"）完全一致。**默认关是对的，不要再默认打开。**
+
+#### 为什么这是结构性的，不是缺一行代码
+
+console 的一个波是 64 车道。卡上只有 32 车道时，跨 64 车道的运算（f16 平衡树求和、lane mask 交换）必须让两个 32 车道 host wave 通过 LDS 交换，而交换需要**组屏障**。组屏障一旦落在发散分支里，没到齐的线程就永远等下去——所以 `widen()` 只在"线程组正好是一个 console 波（64 线程）"时才敢用，这是它 `cs.threads.product() == 64` 那道判断的全部理由。
+
+构建器的线程组是 **256 / 128 / 1024**，天生跨多个波。三个失败程序要的恰恰是"每个车道都到场"，而这在多波组里做不到安全。
+
+| | AMD（`WaveLaneCountMax=64`，RX 7900 XTX） | NVIDIA（`min=32 max=32`，本机 RTX 4080） |
+|---|---|---|
+| 上游路线：声明 `WaveSize=64` | ✅ 可用，根本不需要模拟车道 | ❌ D3D12 不支持，`min=max=32` |
+| 我们的路线：模拟车道 | ✅ 也不必模拟 | ❌ 跨波交换需要组屏障，多波组里死锁 |
+| 构建器 53 个程序 | 应可全翻译 | **3 个永远翻译不出** |
+
+**这才是榜单上 DexNom 78% / Belobug 77.4% 的物理前提**——他们都在 AMD 上，`WaveSize=64` 直接可用。换到 wave32 上限的卡，光追这条路在当前设计下是关着的，跟努力程度无关。
+
+#### 剩下两条路
+
+1. **换一张 AMD 卡验一次**（最省事，1 小时见分晓）：同一份代码在 `min=32 max=64` 的卡上，`widen` 与 `local waves` 都会走别的分支，构建器很可能直接起来。这是把"3 个失败"变成"0 个"最快的验证方式。
+2. **留在 NVIDIA 就要改发散模型**：把 `structure_wide` 从"按波"扩到"按组"——让组里所有波对每个分支做同一个决定（谓词化，谁都不提前退出），屏障才合法。这等于重写结构化器的一部分，工作量大，且拿不到正确 BVH 时的后果已知（早期尝试是"第一次构建器提交后一秒内死在框位模式指针上"）。不建议在没拿到 AMD 数据前动。
+
+#### 本轮附带产出
+
+| 改动 | 作用 |
+|---|---|
+| `VICTORY_BVH_RESOLVE=0` | 只跑构建器、不造 1,000 个 resolve 程序；把首次开闸的验证从小时级压到 3 分钟 |
+| 实测数据 | 构建器 53 个、失败 3 个及其 hash 与偏移；`widen` 救回 33 个、被拒 14 次的原因 |
 
 ---
 
