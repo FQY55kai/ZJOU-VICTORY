@@ -1184,7 +1184,7 @@ impl Staging {
         // A texture made at reduced resolution (the card full) has its
         // largest mips dropped: host mip `i` holds the title's mip
         // `i + drop` ([`crate::resource::mip_drop`]).
-        let drop = self.layout.desc.mips.saturating_sub(self.mips);
+        let _drop = self.layout.desc.mips.saturating_sub(self.mips);
         for (i, (footprint, &rows)) in self.footprints.iter().zip(&self.rows).enumerate() {
             let (mip, slice) = self.part(i);
             let f = footprint.Footprint;

@@ -583,18 +583,6 @@ impl TextureQueue {
         self.rechecks.remove(&index);
     }
 
-    /// Slot `index` was uploaded whole in `frame` from memory `at`, whose
-    /// fingerprint is `print`: looked at again ([`RECHECK_FRAMES`]), unless
-    /// it was written again meanwhile and waits in the queue.
-    /// Up to `max` of the slots whose next look is due at `frame`, the ones
-    /// due longest first.
-    fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
-        if !self.slots.contains_key(&index) {
-            let due = frame + RECHECK_FRAMES[0];
-            self.rechecks.insert(index, Recheck { due, at, print, looks: 0, uploaded: frame });
-        }
-    }
-
     fn rechecks_due(&self, frame: u64, max: usize) -> Vec<(u32, Recheck)> {
         let mut due: Vec<(u32, Recheck)> = self
             .rechecks

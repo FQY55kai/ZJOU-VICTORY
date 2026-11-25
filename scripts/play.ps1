@@ -8,6 +8,10 @@
 #                               gives 60 fps of headroom once frames get shorter
 #   VICTORY_VSYNC=0             no 60 Hz present wait (a test switch; the screen
 #                               may tear)
+#   VICTORY_DSTORAGE_NOTIFY=1   DirectStorage fills the title's physical pages
+#                               through a view of its own; the host's copies of
+#                               those addresses are told the bytes (otherwise the
+#                               first room's walls can read stale copies)
 param(
     [Parameter(Mandatory = $true)][string]$Game,
     [string]$Cache = "$env:LOCALAPPDATA\ZJOU-VICTORY\cache",
@@ -23,5 +27,6 @@ $env:VICTORY_DATA_DIR = $Data
 $env:VICTORY_TEXTURE_NO_WAIT = '1'
 $env:VICTORY_FRAME_INTERVAL = '16667'
 $env:VICTORY_VSYNC = '0'
+$env:VICTORY_DSTORAGE_NOTIFY = '1'
 & $Exe run $Game --execute 2>&1 | Out-File "$env:TEMP\ZJOU-VICTORY.log" -Encoding utf8
 Write-Host "Exited with $LASTEXITCODE; log: $env:TEMP\ZJOU-VICTORY.log"

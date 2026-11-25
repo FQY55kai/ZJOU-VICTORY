@@ -581,7 +581,6 @@ impl HostPipeline {
                 },
             )
         };
-        let none = D3D12_SHADER_BYTECODE::default;
         if compute.is_some() {
             let desc = D3D12_COMPUTE_PIPELINE_STATE_DESC {
                 // SAFETY: a borrowed pointer the description never releases.

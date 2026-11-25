@@ -120,6 +120,9 @@ pub(crate) enum Sym {
     },
     /// Low (`!high`) or high (`high`) 32 bits of the 64-bit float sum over
     /// `lanes` of `mask ? f64(lo, hi) : 0.0`.
+    // The reduce path that made these is not reached by the title's shaders
+    // yet; kept with `lower`'s f64 helpers (upstream reads 64-bit only).
+    #[allow(dead_code)]
     Red64F {
         lo: Value,
         hi: Value,
@@ -324,7 +327,7 @@ fn simulate(
             exec = ((exec & 0xFFFF_FFFF) | ((k & 0xFFFF_FFFF) << 32)) & all;
             continue;
         }
-        if let Fields::Sop { dst, src, .. } = &inst.fields {
+        if let Fields::Sop { src, .. } = &inst.fields {
             if name.starts_with("s_and_b")
                 && src.iter().any(|o| matches!(*o, Operand::Scalar { code, .. } if inst.read(Reg::S(code)).is_some_and(|v| masked.contains(&v))))
                 && let Some(&(_, w)) = inst.writes.iter().find(|w| matches!(w.0, Reg::S(_)))
