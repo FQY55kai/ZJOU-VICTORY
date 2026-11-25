@@ -213,8 +213,7 @@ pub(crate) struct State {
     scissors: Vec<RECT>,
     blend: Option<[f32; 4]>,
     stencil: Option<u32>,
-    /// The depth bounds the title set (the list's own are 0 to 1).
-    bounds: Option<(f32, f32)>,
+    depth_bounds: Option<[f32; 2]>,
     /// The indirect records clamped last, if later draws may still read
     /// them ([`windows`]).
     window: Option<Window>,
@@ -719,7 +718,7 @@ impl State {
     }
 
     pub(crate) fn set_depth_bounds(&mut self, list: &HostList, min: f32, max: f32) {
-        self.bounds = Some((min, max));
+        self.depth_bounds = Some([min, max]);
         crate::draw::depth_bounds(list, min, max);
     }
 
@@ -759,7 +758,7 @@ impl State {
         if let Some(reference) = self.stencil {
             crate::draw::stencil_ref(list, reference);
         }
-        if let Some((min, max)) = self.bounds {
+        if let Some([min, max]) = self.depth_bounds {
             crate::draw::depth_bounds(list, min, max);
         }
     }

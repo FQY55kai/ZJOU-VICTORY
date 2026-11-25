@@ -1073,15 +1073,14 @@ fn into_destination(
     // Consecutive pages of one allocation (the usual case): written in
     // place through one view.
     if let Some(mut window) = super::xmem::page_window(pages, offset, len) {
-        let filled = fill(window.bytes()).map(drop);
+        let filled = fill(window.bytes());
         drop(window);
-        // The title maps pages where the card reads them and has them
-        // filled afterwards: the GPU side's copies of those addresses
-        // learn of the bytes only from this (upstream c75fdba, fork PR
-        // #571). After a decode that failed part way too: what it wrote
-        // is there.
-        super::xmem::pages_written(pages, offset, len);
-        return filled;
+        // Written around the title's mapping: tell the GPU side where the
+        // title sees these bytes (`wrote_physical`).
+        if let Ok(n) = filled {
+            super::xmem::wrote_physical(pages, offset, n);
+        }
+        return filled.map(drop);
     }
     let mut data = vec![0; len];
     let n = fill(&mut data)?;
@@ -1118,7 +1117,7 @@ fn into_destination(
             );
         }
         // As above, after the write that succeeded.
-        super::xmem::pages_written(pages, offset, n);
+        super::xmem::wrote_physical(pages, offset, n);
         Ok(())
     } else {
         let given_up = RETRIED[1].fetch_add(1, Ordering::Relaxed) + 1;

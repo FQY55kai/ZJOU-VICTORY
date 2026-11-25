@@ -377,7 +377,6 @@ pub fn warm(paths: Vec<PathBuf>, jobs: Option<usize>, pipelines: bool) -> Result
     );
     Ok(())
 }
-
 fn translate(
     source: &Source,
     path: &Path,

@@ -75,6 +75,9 @@ pub(crate) struct Staging {
     waiting: std::sync::atomic::AtomicU64,
 }
 
+/// How long a texture whose hash changed is hashed at every check.
+const LIVE_FRAMES: u64 = 30;
+
 /// What a texture's staging buffer holds: the hash of the memory detiled
 /// (memory not watched), or the write-watch asking it was detiled after.
 #[derive(Default)]
@@ -87,6 +90,8 @@ struct Last {
     /// ([`Staging::unseen_write`]): it is hashed at every check until this
     /// frame.
     unguarded: u64,
+    /// The frame a hash last found the texture changed in.
+    changed: Option<u64>,
 }
 
 // SAFETY: the staging mapping is written only at submission, under
@@ -984,12 +989,17 @@ impl Staging {
             let unwritten = last.asked != 0 && written.iter().all(|&(_, w)| w <= last.asked);
             last.asked = now;
             let frame = crate::frame::current();
-            let turn = frame.wrapping_add((start >> 16) as u64) % HASH_EVERY == 0;
+            let turn = frame.wrapping_add((start >> 16) as u64).is_multiple_of(HASH_EVERY);
             // Linear pictures of one level are what the processor draws (the
             // planes of a movie), through a view of its own.
             let desc = &self.layout.desc;
             let film = desc.swizzle.0 == 0 && desc.mips == 1;
-            if unwritten && !turn && !film && frame >= last.unguarded {
+            // A texture that changed lately is hashed at every check: the
+            // guard misses writes through another view (a video decoder
+            // filling a ring of frames), and every eighth frame showed such
+            // a ring out of order.
+            let live = last.changed.is_some_and(|at| frame < at + LIVE_FRAMES);
+            if unwritten && !turn && !live && !film && frame >= last.unguarded {
                 return 0;
             }
             unseen = unwritten;
@@ -1058,6 +1068,7 @@ impl Staging {
                     self.unseen_write(last);
                 }
                 last.hash = Some(hash);
+                last.changed = Some(crate::frame::current());
                 self.detile(tiled);
                 #[cfg(feature = "diagnostics")]
                 crate::copystat::add(crate::copystat::C::TexChanged, size as u64);
@@ -1077,6 +1088,7 @@ impl Staging {
             self.unseen_write(last);
         }
         last.hash = Some(hash);
+        last.changed = Some(crate::frame::current());
         self.detile(tiled);
         #[cfg(feature = "diagnostics")]
         crate::copystat::add(crate::copystat::C::TexChanged, size as u64);

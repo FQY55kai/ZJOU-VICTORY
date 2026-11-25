@@ -5,6 +5,7 @@
 
 mod census;
 mod inspect;
+#[cfg(windows)]
 mod run;
 mod shader;
 mod translate;
@@ -66,6 +67,9 @@ enum Command {
         /// Also list the decoded native instructions (implies --verbose).
         #[arg(long)]
         disasm: bool,
+        /// Show the effects, techniques, and passes in shader databases.
+        #[arg(long)]
+        effects: bool,
     },
     /// Run every shader found (containers, SGD5 files) through the
     /// translator and report what it cannot handle yet.
@@ -75,7 +79,7 @@ enum Command {
         /// else the newest Windows SDK's).
         #[arg(long)]
         validate: bool,
-        /// Also create a host D3D12 pipeline for each emitted shader.
+        /// Check host pipelines, or prebuild the shader pack's pipelines with --cache.
         #[arg(long)]
         pipelines: bool,
         /// Print one line per program and outcome.
@@ -163,7 +167,8 @@ fn main() -> Result<()> {
             paths,
             verbose,
             disasm,
-        } => shader::run(paths, verbose || disasm, disasm),
+            effects,
+        } => shader::run(paths, verbose || disasm, disasm, effects),
         Command::Translate {
             paths,
             validate,
