@@ -844,8 +844,12 @@ impl Staging {
                 "a sampled texture's memory is all zero (not streamed yet, or a failed BCPack read)"
             );
         }
+        // A texture made at reduced resolution (the card full) has its
+        // largest mips dropped: host mip `i` holds the title's mip
+        // `i + drop` ([`crate::resource::mip_drop`]).
+        let drop = self.layout.desc.mips.saturating_sub(self.mips);
         for (i, (footprint, &rows)) in self.footprints.iter().zip(&self.rows).enumerate() {
-            let (mip, slice) = (i as u32 % self.mips, i as u32 / self.mips);
+            let (mip, slice) = (i as u32 % self.mips + drop, i as u32 / self.mips);
             let f = footprint.Footprint;
             let pitch = f.RowPitch as usize;
             let len = pitch * rows as usize * f.Depth as usize;

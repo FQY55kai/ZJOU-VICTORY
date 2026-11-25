@@ -1362,6 +1362,37 @@ pub(crate) fn host_made<'a>(
 /// limit on those copies' bytes instead). Past the budget the system moves
 /// the card's memory into the PC's, which ended runs 20 and 24.
 #[cfg(windows)]
+/// Whether the card is so full that even reduced textures barely fit
+/// (`lowres_room`): 97 percent of the budget. Below [`room`]'s line and
+/// above this one, textures are still made — at reduced resolution
+/// ([`mip_drop`]).
+pub(crate) fn lowres_room() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    match crate::host::host().and_then(|h| h.video_memory()) {
+        Some([budget, used, ..]) => used < budget / 100 * 97,
+        None => KINDS[1].load(Relaxed) < 6 << 30,
+    }
+}
+
+/// How many of a texture's largest mips are dropped when it is made while
+/// the card is full ([`room`]): its resolution drops instead of the texture
+/// waiting for room forever. `VICTORY_LOWRES_MIPS` (0 to 8, default 3)
+/// says another; 0 keeps full resolution and the old wait.
+fn mip_drop(desc: &ResourceDesc) -> u32 {
+    static DROP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+    let drop = *DROP.get_or_init(|| {
+        std::env::var("VICTORY_LOWRES_MIPS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(3)
+    });
+    if drop == 0 || !fills(desc) || room() {
+        return 0;
+    }
+    // A texture keeps at least two mips (its smallest level and one).
+    drop.min(u32::from(desc.mip_levels).saturating_sub(2))
+}
+
+/// Textures made at reduced resolution since the start ([`mip_drop`]).
+pub(crate) static LOWRES_TEXTURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub(crate) fn room() -> bool {
     use std::sync::atomic::Ordering::Relaxed;
     const FLOOR: u64 = 2 << 30;
@@ -1882,6 +1913,29 @@ fn host_texture(
     if d.flags & UNORDERED != 0 && SRGB.iter().any(|&(srgb, _)| srgb == d.format) {
         d.format = family(d.format);
     }
+    // Full card: a texture the title fills is made at reduced resolution
+    // (its largest mips dropped) rather than waiting for room forever.
+    // Render targets and depth keep their size: passes address them by
+    // pixel. The detile fills host mip i from the title's mip i + drop,
+    // and views' mip ranges are clamped to what is there
+    // (`descriptor::host::make`).
+    let drop = mip_drop(desc);
+    if drop > 0 {
+        d.mip_levels -= drop as u16;
+        d.width = (d.width >> drop).max(1);
+        d.height = ((d.height as u64) >> drop).max(1) as u32;
+        let n = LOWRES_TEXTURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if n <= 8 || n.is_multiple_of(200) {
+            tracing::info!(
+                so_far = n,
+                drop,
+                width = d.width,
+                height = d.height,
+                mips = d.mip_levels,
+                "a texture is made at reduced resolution (the card is full)"
+            );
+        }
+    }
     // The clear value names the format too: format, then color or depth
     // and stencil (5 words).
     let clear_value = (!clear.is_null()).then(|| {
@@ -1922,6 +1976,16 @@ fn host_texture(
         });
     }
     texture
+}
+
+/// The mip count of a texture as the title describes it (its console
+/// layout; a host copy made at reduced resolution has fewer).
+pub(crate) fn title_mips(this: This) -> Option<u32> {
+    if this.is_null() {
+        return None;
+    }
+    let r = resource(this);
+    (r.desc.dimension != BUFFER).then(|| u32::from(r.desc.mip_levels))
 }
 
 /// A texture's console memory and description; `None` for buffers.

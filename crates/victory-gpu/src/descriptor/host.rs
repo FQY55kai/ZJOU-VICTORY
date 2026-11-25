@@ -1573,6 +1573,28 @@ macro_rules! once {
 }
 
 /// A view description from its words, with the format as the host has it.
+/// Clamps a texture view's mip range (`words[3]` first level, `words[4]`
+/// levels; the layout of every texture dimension's member) to the host
+/// texture's mips when it was made at reduced resolution (its largest mips
+/// dropped, `drop` of them): the view's mip `m` is the host's `m - drop`,
+/// and one of the dropped mips reads as the sharpest there is.
+fn clamp_srv_mips(words: &mut [u32; 10], drop: u32, host_mips: u32) {
+    if host_mips == 0 {
+        return;
+    }
+    // Every dimension with mip fields (not a buffer, unknown or MSAA).
+    match words[1] {
+        2..=5 | 8..=10 => {}
+        _ => return,
+    }
+    if drop == 0 && words[4] <= host_mips && words[3] < host_mips {
+        return;
+    }
+    let start = words[3].saturating_sub(drop).min(host_mips - 1);
+    words[3] = start;
+    words[4] = words[4].clamp(1, host_mips - start);
+}
+
 fn srv_desc(words: &[u32; 10]) -> D3D12_SHADER_RESOURCE_VIEW_DESC {
     let mut words = *words;
     words[0] = crate::resource::pc_format(words[0]);
@@ -2100,7 +2122,17 @@ fn make(view: &View, at: D3D12_CPU_DESCRIPTOR_HANDLE) -> Option<Kept> {
                         }
                     }
                 }
-                let mut desc = desc.as_ref().map(srv_desc);
+                // A texture made at reduced resolution (the card full)
+                // has its largest mips dropped: the view's mip range maps
+                // to the host texture's (`clamp_srv_mips`).
+                // SAFETY: a live texture.
+                let host_mips = u32::from(unsafe { texture.GetDesc() }.MipLevels);
+                let full = crate::resource::title_mips(resource).unwrap_or(host_mips);
+                let mut words = desc.as_ref().copied();
+                if let Some(w) = words.as_mut() {
+                    clamp_srv_mips(w, full.saturating_sub(host_mips), host_mips);
+                }
+                let mut desc = words.as_ref().map(srv_desc);
                 if !fits(texture, desc.as_mut().map(|d| &mut d.Format), false) {
                     return None;
                 }

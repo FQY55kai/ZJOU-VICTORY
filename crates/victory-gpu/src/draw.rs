@@ -1842,7 +1842,10 @@ impl State {
             if !room {
                 let has_its_texture = reupload_when_full()
                     && heap.handle(index).is_some_and(|handle| host.texture_slot_made_from(index, handle));
-                if !has_its_texture {
+                // Past [`room`] but under `lowres_room`: made at reduced
+                // resolution (its largest mips dropped) rather than
+                // waiting ([`crate::resource::mip_drop`]).
+                if !has_its_texture && !crate::resource::lowres_room() {
                     refused += 1;
                     if refused > 256 {
                         break;
