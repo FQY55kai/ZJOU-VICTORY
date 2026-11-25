@@ -140,6 +140,9 @@
 | `e6a5ed7` | 合并 JoshuuDev/victory-amd（10 处冲突，Spans 取真内存方案） |
 | `bfdb186` | 合并后续：rechecks 记账、双 recheck 共存、depth-bounds 命名 |
 | `31904df`/`67076c7` | 低分辨率默认关（稳定优先） |
+| `f2b8c85` | **pixel shader 的 quad 读取走 quad read（含 helper lane）**：修三角形边线（车漆/玻璃/皮肤），移植自 Belobug `03629f3` |
+| `1fc58f3` | **常量间接漫反射光**（`VICTORY_AMBIENT`，默认 0.6）：光追不跑时替代 resolve 输出，修室内色块/洋红植被/黑人脸，移植自 Belobug `4f45ab8` |
+| `c7be77e` | **鼠标映射**：移动转镜头（右摇杆，自动衰减）、左键开火、右键瞄准、中键 A |
 
 ---
 
@@ -155,7 +158,26 @@
 | `VICTORY_LOWRES_MIPS` | 显存满丢 mip | **默认 0（勿开，待修）** |
 | `VICTORY_UNIFIED` | 统一内存缓冲 | **默认 0（勿开，待改造）** |
 | `VICTORY_HEAP_RECHECK` / `VICTORY_VIEW_GUARD` / `VICTORY_TEXTURE_SWEEP` | joshuu 修复开关 | 默认开 |
+| `VICTORY_AMBIENT` | 间接漫反射光常量（0=全黑，`off`=保留原输出） | 默认 `0.6`；觉得偏亮可下调 |
 | `victory warm` | 着色器预热 | 更新构建后跑一次 |
+
+### 操作方式（不接手柄时）
+
+| 输入 | 手柄 | 说明 |
+|---|---|---|
+| **W A S D** | 左摇杆 | 移动 |
+| **鼠标移动** | 右摇杆 | 转镜头（停下即停，不漂移） |
+| **I J K L** | 右摇杆 | 键盘转镜头（备用） |
+| **鼠标左键** | 右扳机 | 开火/攻击 |
+| **鼠标右键** | 左扳机 | 瞄准 |
+| **鼠标中键** | A | 交互/确认 |
+| **Enter / 空格** | A | 交互/跳跃/确认 |
+| **Backspace** | B | 返回 |
+| **X / Y** | X / Y | X、Y 键 |
+| **方向键** | 十字键 | 菜单导航 |
+| **Q / E** | 左右肩键 | 切换 |
+| **Z / C** | 左右扳机 | 油门/刹车 |
+| **Esc / Tab** | Menu / View | 暂停/切换视图 |
 
 ---
 
