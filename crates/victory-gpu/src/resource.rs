@@ -1376,12 +1376,14 @@ pub(crate) fn lowres_room() -> bool {
 
 /// How many of a texture's largest mips are dropped when it is made while
 /// the card is full ([`room`]): its resolution drops instead of the texture
-/// waiting for room forever. `VICTORY_LOWRES_MIPS` (0 to 8, default 3)
-/// says another; 0 keeps full resolution and the old wait.
+/// waiting for room forever. `VICTORY_LOWRES_MIPS` (0 to 8; 0, the
+/// default, keeps full resolution and the old wait). Experimental: any
+/// drop above 0 had the driver remove the device at the world's load
+/// (the view's mip range or the detile's offset needs another look).
 fn mip_drop(desc: &ResourceDesc) -> u32 {
     static DROP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let drop = *DROP.get_or_init(|| {
-        std::env::var("VICTORY_LOWRES_MIPS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(3)
+        std::env::var("VICTORY_LOWRES_MIPS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0)
     });
     if drop == 0 || !fills(desc) || room() {
         return 0;
