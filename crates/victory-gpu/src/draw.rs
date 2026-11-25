@@ -380,6 +380,10 @@ pub(crate) static HEAP_VIEWS_ELSEWHERE: AtomicU64 = AtomicU64::new(0);
 /// Passes over the view heap's buffer views for shaders that pick them by
 /// index ([`State::heap_buffers`]), and the microseconds they took.
 pub(crate) static HEAP_BUFFER_PASSES: AtomicU64 = AtomicU64::new(0);
+
+/// Render-target sets the same targets as the one before them did and
+/// were not set again ([`State::set_targets`]).
+pub(crate) static BINDS_SAVED: AtomicU64 = AtomicU64::new(0);
 pub(crate) static HEAP_BUFFER_MICROS: AtomicU64 = AtomicU64::new(0);
 /// Textures brought up to date for shaders that pick them by index
 /// ([`State::heap_textures`]), the bytes of their memory, and the slots
@@ -604,6 +608,21 @@ impl State {
         let Some(host) = crate::host::host() else {
             return;
         };
+        // The title sets the same targets again and again (a deferred
+        // pass's per-draw setup): free on the console, here a descriptor
+        // make and a driver call each time (25,000 sets a world frame).
+        // The same targets, in the same order, are not set again.
+        // `VICTORY_BIND_CACHE=0` sets them as before.
+        static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *CACHE.get_or_init(|| std::env::var_os("VICTORY_BIND_CACHE").is_none_or(|v| v != "0"))
+            && self.targets_set
+            && self.depth_handle == depth
+            && self.target_handles.len() == handles.len()
+            && self.target_handles.iter().zip(handles).all(|(a, b)| a == b)
+        {
+            BINDS_SAVED.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         self.target_handles.clear();
         self.target_handles.extend_from_slice(handles);
         self.depth_handle = depth;
