@@ -76,3 +76,7 @@
 *.swp
 Thumbs.db
 .DS_Store
+
+# 本地实测日志（run1..runN.log）
+run*.log
+_*.log
