@@ -256,22 +256,31 @@ fn ask_run(j: &mut Journal, pieces: &[(usize, usize)]) {
 fn ask_kernel(j: &mut Journal, first: usize, last: usize) -> bool {
     use windows_sys::Win32::System::Memory::GetWriteWatch;
     const WRITE_WATCH_FLAG_RESET: u32 = 1;
+    let known_unwatched = {
+        let u = UNWATCHED.lock().unwrap_or_else(|e| e.into_inner());
+        u.range(..=first).next_back().is_some_and(|(&a, &b)| a <= first && last <= b)
+    };
     let mut count = (last - first) * PAGE / KERNEL_PAGE;
     j.found.resize(count.max(j.found.len()), 0);
     let mut granularity = 0;
     #[cfg(feature = "diagnostics")]
     let started = std::time::Instant::now();
     // SAFETY: the answer buffer holds `count` entries.
-    let failed = unsafe {
-        GetWriteWatch(
-            WRITE_WATCH_FLAG_RESET,
-            (first * PAGE) as *const _,
-            (last - first) * PAGE,
-            j.found.as_mut_ptr().cast(),
-            &mut count,
-            &mut granularity,
-        )
-    } != 0;
+    let failed = known_unwatched
+        || unsafe {
+            GetWriteWatch(
+                WRITE_WATCH_FLAG_RESET,
+                (first * PAGE) as *const _,
+                (last - first) * PAGE,
+                j.found.as_mut_ptr().cast(),
+                &mut count,
+                &mut granularity,
+            )
+        } != 0;
+    if failed && !known_unwatched {
+        let mut u = UNWATCHED.lock().unwrap_or_else(|e| e.into_inner());
+        u.insert(first, last);
+    }
     if failed {
         return false;
     }
@@ -309,12 +318,34 @@ pub(crate) fn asked(start: usize, end: usize) -> Option<(u64, Vec<(usize, u64)>)
 /// this asking's number, which is higher than any in the list but those the
 /// kernel just reported. `None` if the memory is not write-watched (nor,
 /// with `guarded`, view memory, which is then guarded).
+/// Page ranges Windows refuses to watch (in-place memory, file mappings):
+/// remembered so the call that fails the same way every time is not made
+/// again (a syscall an ask; run 60's logs had the failures of every ask).
+/// Cleared where the runtime remaps.
+static UNWATCHED: Mutex<std::collections::BTreeMap<usize, usize>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+/// Forgets the memo of ranges Windows refused to watch in `[at, at + len)`.
+pub(crate) fn unwatched_forget(at: usize, len: usize) {
+    let mut u = UNWATCHED.lock().unwrap_or_else(|e| e.into_inner());
+    let range = at / PAGE..at.saturating_add(len).div_ceil(PAGE);
+    let stale: Vec<usize> = u.range(range).map(|(&a, _)| a).collect();
+    for a in stale {
+        u.remove(&a);
+    }
+}
+
 pub(crate) fn writes(start: usize, end: usize, guarded: bool) -> Option<(u64, Vec<(usize, u64)>)> {
     use windows_sys::Win32::System::Memory::GetWriteWatch;
     const WRITE_WATCH_FLAG_RESET: u32 = 1;
     let (first, last) = (start / PAGE, end.div_ceil(PAGE));
     let mut j = JOURNAL.lock().unwrap_or_else(|e| e.into_inner());
     let j = &mut *j;
+    // Windows refused this range before: it would refuse again.
+    let known_unwatched = {
+        let u = UNWATCHED.lock().unwrap_or_else(|e| e.into_inner());
+        u.range(..=first).next_back().is_some_and(|(&a, &b)| a <= first && last <= b)
+    };
     // Asked ahead with the submission's other ranges: the journal has it.
     if j.ahead.iter().any(|&(a, b)| a <= first && last <= b) {
         return Some((
@@ -331,16 +362,21 @@ pub(crate) fn writes(start: usize, end: usize, guarded: bool) -> Option<(u64, Ve
     #[cfg(feature = "diagnostics")]
     let started = std::time::Instant::now();
     // SAFETY: the answer buffer holds `count` entries.
-    let failed = unsafe {
-        GetWriteWatch(
-            WRITE_WATCH_FLAG_RESET,
-            (first * PAGE) as *const _,
-            (last - first) * PAGE,
-            j.found.as_mut_ptr().cast(),
-            &mut count,
-            &mut granularity,
-        )
-    } != 0;
+    let failed = known_unwatched
+        || unsafe {
+            GetWriteWatch(
+                WRITE_WATCH_FLAG_RESET,
+                (first * PAGE) as *const _,
+                (last - first) * PAGE,
+                j.found.as_mut_ptr().cast(),
+                &mut count,
+                &mut granularity,
+            )
+        } != 0;
+    if failed && !known_unwatched {
+        let mut u = UNWATCHED.lock().unwrap_or_else(|e| e.into_inner());
+        u.insert(first, last);
+    }
     let guarded = if failed {
         count = 0;
         if !guarded {
@@ -837,6 +873,9 @@ pub fn title_memory_reading_now() -> Option<Reading> {
 /// shows is new and read-write, so it is no longer guarded (nor known
 /// unmapped).
 pub fn title_memory_remapped(at: usize, len: usize) {
+    // The memo of what Windows refused to watch is stale here: the pages
+    // may be watched now.
+    unwatched_forget(at, len);
     // A placed texture there arrives, goes or changes with no descriptor
     // written.
     crate::descriptor::host::remapped(at, len);
