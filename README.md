@@ -230,6 +230,8 @@
 
 **为什么它值得做**：这是从"能跑"到"好看"的分水岭。做完之后阴影不再是死黑，画面观感接近主机。
 
+> **2026-11-25 夜更新：这条路已经有人走通了。** PortWatch 榜首 `DexNom/VIctory`（78%，RX 7900 XTX）已跑通光追光照，做法与我们下面的判断一致——**不映射到 DXR**，而是翻译标题自己的 52 个 BVH 构建程序与 64 个遍历程序，只把 `image_bvh*_intersect_ray` 一条指令用 DXIL 模拟（详见其 `docs/fork-ray-tracing.md`）。所以本章的任务从"从零造"改为"移植"，见**第十章**。
+
 ### 我们已经有的（地基是实的）
 
 | 组件 | 状态 |
@@ -331,6 +333,52 @@ Xbox 的 XDXR 有两种可能的实现，决定了完全不同的工程路线：
 | 稳态帧 | 4.6–6.6 fps / 151–239 ms | 5.0–5.3 fps / 190–200 ms |
 
 **帧率没有可测变化**——这一项本来只占帧时 1–3%，如实记录，不吹。真正省掉的是每帧数万次的小拷贝与 dirty 记录，以及由此引发的反复 settle。
+
+---
+
+## 十、上游同步（2026-11-25 夜）
+
+### 榜单已经变了
+
+| 项目 | 进度 | 变化 |
+|---|---|---|
+| **DexNom/VIctory** | **78%** | 新登顶；**首个 AMD 跑通光追光照**，说明为"接近零售版"，3–4 fps，很少崩 |
+| Belobug/VIctory-Belobug-AMD | 77.4% | 我们已移植过它的 quad read 与 AMBIENT |
+| Zettrox/ztrx | 64.2% | 打通序章到 Jason 首任务"Gone Fishing" |
+| fxceless/victory-fork | 59.8% | 我们另一个参考源 |
+| Marvisak/VIctory（上游） | 40% | 我们全部代码的祖宗 |
+
+### 上游领先我们多少
+
+分叉点 `ffe310eb`（11-24 10:53）之后，**上游主线 319 个提交、其中 182 个非合并提交**，我们 106 个、117 个文件、+53k 行。**直接 `git merge` 产生 411 处冲突 / 55 个文件**：
+
+| 文件 | 冲突块 | 文件 | 冲突块 |
+|---|---|---|---|
+| `emit/lower.rs` | 65 | `emit/shader.rs` | 17 |
+| `draw.rs` | 38 | `shadow.rs` | 15 |
+| `host.rs` | 35 | `emit/mod.rs` | 13 |
+| `descriptor/host.rs` | 19 | `texture.rs` | 13 |
+
+冲突这么密，是因为上游在 **11-24 22:36 有一整块大型功能落地**（title 内存按裸地址走页表 `27c3dc9d`、FidelityFX 与 64 位图像原子 `0b35b7fe`、BVH 求交、shader pack `286e33f0`、根视图走页表 `0f637570`）——它重写了我们改动最深的 `shadow.rs` / `host.rs` / `memory.rs`。**盲合会把双方都毁掉**，所以按“逐个提交审查后挑取”来做。
+
+### 本轮合入（逐条人工核对冲突）
+
+| 上游提交 | 内容 | 我们的处理 |
+|---|---|---|
+| `4e60ea3a` | 无宿主管线时**先丢间接调用，再做参数刷新与钳位 dispatch**；上游实测每帧 1294–1750 个这类空转 | 我们 `execute_indirect` 早已把 `host_pipeline` 查表提到最前并绑定 `p`（矩形与类型判断都要用），比它更彻底 → **保留我们的结构，只采纳它的诊断原因 `why("no host pipeline")`** |
+| `06019553` | **helper lane 的 `v_readfirstlane` 读自己的值**：否则 waterfall 循环里只剩 helper lane 时会空转到 `LOOP_LIMIT`，单次绘制 0.3–1.3 秒，约 200 秒后 `DEVICE_HUNG` | 我们的 `v_readfirstlane_b32` 走双 host-wave 交换（`first_lane` + `exchange_halves`），该结构保留；在其后追加它的 `helper_reads_own` 选择，helper lane 取自己的值 |
+
+验证：全量 **563 个测试通过、0 失败**，`cargo xtask policy` 通过，诊断构建上机运行**零 `DEVICE_HUNG` / 零设备丢失**。
+
+### 有意没合入的（附阻塞原因）
+
+| 上游提交 | 价值 | 为什么这轮不合 |
+|---|---|---|
+| `cd94d353` + `940d32f6` | shader 标记它们经视图写过的页，回读只比那些页——正打我们 42.7 ms 的 copy back 与 234 遍卡上哈希 | 牵动 **20 个文件**，依赖上面那一大块上游落地；单挑必然造出一棵半新半旧的树 |
+| `ed0dbfd1` | shader 声明范围内若有 title 写入，副本会保持陈旧（某 RTX 4050 上 dispatch 读到 0 尺寸死循环直到设备移除） | 依赖上游 shadow 重构（`tracked` 字段、`before` 结构都不同）。**我们树里确实有同一缺陷**（`Shadow::update` 整段跳过 `pending` 范围），但修法要同时改快照，否则回写会覆盖 title 的后续写入——写回路径最怕内存损坏，不硬凑 |
+| DexNom `bc3cd4b0` 等 6 个 RT 提交 | **光追光照本身** | 依赖 `cd94d353` 与那一大块落地；它的 `memory.rs +396`、新增 `writeback.rs 321` 正是建立在我们没有的地基上 |
+
+**下一步的推荐路径**：先在一个独立 worktree 里把上游 `940d32f6` 整棵树拉起来（它能编译、能自测），再按 crate 逐块把我们的改动搬上去（`lower` 的 quad read、`AMBIENT`、鼠标映射、`changed_runs_within`、descriptor 去重、relay/flight），每搬一块跑一次 563 个测试；最后叠 DexNom 的 RT 提交。这才是拿得到光追的唯一稳妥路线。
 
 ---
 
