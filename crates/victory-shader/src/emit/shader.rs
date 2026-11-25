@@ -78,8 +78,8 @@ pub const USER_GROUP_BASE: u32 = 0x104;
 
 /// `ShaderFlags` bits (metadata) and their `SFI0` feature bits.
 pub(crate) mod flags {
-    pub const RAW_BUFFERS: u64 = 1 << 4;
     pub const DOUBLES: u64 = 1 << 2;
+    pub const RAW_BUFFERS: u64 = 1 << 4;
     pub const STENCIL_REF: u64 = 1 << 11;
     pub const TYPED_UAV_LOADS: u64 = 1 << 13;
     pub const WAVE_OPS: u64 = 1 << 19;
@@ -463,6 +463,7 @@ impl Shader {
             for (flag, used) in [
                 (flags::WAVE_OPS, used.wave_ops),
                 (flags::INT64, used.int64),
+                (flags::DOUBLES, used.doubles),
                 (flags::TYPED_UAV_LOADS, used.typed_uav_loads),
                 (flags::RESOURCE_HEAP, used.heap_views),
                 (flags::SAMPLER_HEAP, used.heap_samplers),

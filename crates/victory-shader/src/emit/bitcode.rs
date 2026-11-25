@@ -30,6 +30,8 @@ enum TypeDef {
     Void,
     Int(u32),
     Float,
+    /// A 64-bit float (`double`); made and taken apart through
+    /// `dx.op.makeDouble` / `dx.op.splitDouble`.
     Double,
     /// Pointee and address space.
     Ptr(Ty, u32),
