@@ -5143,8 +5143,15 @@ impl HostList {
                     continue;
                 }
                 Step::Texture(staging) => {
-                    if batch.texture_due(staging) {
+                    // Past the budget the staging buffers wait for the
+                    // frames to come (they stay due: nothing is marked
+                    // refreshed), so a frame's streaming does not stop it.
+                    if batch.tex_spent < texture_ms()
+                        && batch.texture_due(staging)
+                    {
+                        let refresh = std::time::Instant::now();
                         staging.refresh();
+                        batch.tex_spent += refresh.elapsed();
                     }
                     continue;
                 }
@@ -5190,6 +5197,24 @@ struct Batch {
     index: std::collections::HashMap<usize, usize>,
     /// Staging buffers (by address) refreshed since the last title write.
     textures: std::collections::HashSet<usize>,
+    /// Time spent refreshing staging buffers this submission, against the
+    /// per-submission budget (`VICTORY_TEXTURE_MS`, 64 ms): past it the
+    /// rest wait for the next frames rather than a frame's coming to a
+    /// stop (the world's streams took seconds of one frame).
+    tex_spent: std::time::Duration,
+}
+
+/// The per-submission budget for staging-buffer refreshes, in milliseconds
+/// (`VICTORY_TEXTURE_MS`; 64 unless set).
+fn texture_ms() -> std::time::Duration {
+    static MS: OnceLock<u64> = OnceLock::new();
+    let ms = *MS.get_or_init(|| {
+        std::env::var("VICTORY_TEXTURE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(64)
+    });
+    std::time::Duration::from_millis(ms)
 }
 
 impl Batch {
@@ -5972,7 +5997,21 @@ impl Host {
             if let Some((buffer, footprint)) = capture {
                 crate::capture::save_read_back(frame, &buffer, &footprint);
             }
-            let _ = p.swap_chain.Present(0, DXGI_PRESENT(0));
+            // The title's frames arrive paced (a video at 30); without a
+            // sync interval the present flips whenever it lands, a frame
+            // showing for one refresh or two as it happens, which the eye
+            // reads as a stutter. `VICTORY_VSYNC=0` asks for none.
+            let sync = {
+                static VSYNC: OnceLock<u32> = OnceLock::new();
+                *VSYNC.get_or_init(|| {
+                    if std::env::var_os("VICTORY_VSYNC").is_some_and(|v| v == "0") {
+                        0
+                    } else {
+                        1
+                    }
+                })
+            };
+            let _ = p.swap_chain.Present(sync, DXGI_PRESENT(0));
             p.meter.frame(p.hwnd);
             #[cfg(feature = "diagnostics")]
             return Some(probe.is_some_and(|b| crate::capture::black(&b)));

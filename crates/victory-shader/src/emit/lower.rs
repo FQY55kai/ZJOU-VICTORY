@@ -5477,6 +5477,130 @@ impl<'a> Lower<'a> {
     // level 0, so sizes the code shifts by it come out right) and the other
     // dwords (addresses, formats, tiling) have no host value: reading them
     // stops the program.
+
+    /// The GFX10 descriptor words of the view `site` loads, rebuilt from the
+    /// host's view's dimensions (the doc on [`Self::descriptor_data`]):
+    /// `props`, `image` and `uav` say the kind, either what a consumer's
+    /// instruction names or the 2D image a nameless bindless read is taken
+    /// to read. `first` is the descriptor dword the load starts at.
+    fn descriptor_words(
+        &mut self,
+        inst: &Inst,
+        site: Site,
+        first: u8,
+        props: (u32, u32),
+        image: Option<u32>,
+        uav: bool,
+    ) -> Result<(), Why> {
+        const OTHER: Why = "a descriptor's address or format read as data";
+        let Fields::Smem {
+            data: Some(Operand::Scalar { code, .. }),
+            ..
+        } = inst.fields
+        else {
+            return Err("a scalar memory read as data");
+        };
+        let count = match inst.name().strip_prefix("s_load_dword") {
+            Some("") => 1u32,
+            Some("x2") => 2,
+            Some("x4") => 4,
+            Some("x8") => 8,
+            Some("x16") => 16,
+            _ => return Err("a scalar memory read as data"),
+        };
+        let src = Source::Loaded { load: site, first };
+        let used = self.used_kind(&src);
+        let h = self.handle(site, &src, false, props)?;
+        let c = self.cur;
+        let i32t = self.s.t.i32;
+        let dims = self.s.m.named_struct("dx.types.Dimensions", vec![i32t; 4]);
+        let mip = if image.is_some() && !uav {
+            self.s.m.i32(0)
+        } else {
+            self.s.m.undef(i32t)
+        };
+        let d = self
+            .s
+            .op(c, "getDimensions", Attr::ReadOnly, dims, 72, &[h, mip]);
+        let field = |l: &mut Self, k: u32| l.s.m.extract(c, d, k);
+        let words: Vec<(u32, V)> = match image {
+            Some(kind) => {
+                let one = self.s.m.i32(1);
+                let w = field(self, 0);
+                let (height, depth) = match kind {
+                    1 => (one, one),
+                    2 => (field(self, 1), one),
+                    6 => (one, field(self, 1)),
+                    _ => (field(self, 1), field(self, 2)),
+                };
+                let levels = if uav { one } else { field(self, 3) };
+                let less = |l: &mut Self, x: V| l.s.m.bin(c, Bin::Sub, x, one);
+                let (w, height, depth, levels) = (
+                    less(self, w),
+                    less(self, height),
+                    less(self, depth),
+                    less(self, levels),
+                );
+                let k = |l: &mut Self, v: u32| l.s.m.i32(v);
+                let (k30, k2, k14, k16, mask) = (
+                    k(self, 30),
+                    k(self, 2),
+                    k(self, 14),
+                    k(self, 16),
+                    k(self, 0x3FFF),
+                );
+                let d1 = self.s.m.bin(c, Bin::Shl, w, k30);
+                let hi = self.s.m.bin(c, Bin::LShr, w, k2);
+                let hi = self.s.m.bin(c, Bin::And, hi, mask);
+                let ht = self.s.m.bin(c, Bin::Shl, height, k14);
+                let d2 = self.s.m.bin(c, Bin::Or, hi, ht);
+                let ty = [0, 8, 9, 0, 10, 0, 12, 13][kind as usize];
+                let base = k(self, 0xFAC | ty << 28);
+                let last = self.s.m.bin(c, Bin::Shl, levels, k16);
+                let d3 = self.s.m.bin(c, Bin::Or, base, last);
+                vec![(1, d1), (2, d2), (3, d3), (4, depth)]
+            }
+            None => {
+                // A raw view counts bytes; the descriptor's record count is in elements.
+                let n = field(self, 0);
+                let stride = used.map_or(0, |u| u.stride);
+                let n = if props.0 & 0xFF == 11 && stride > 1 {
+                    let k = self.s.m.i32(stride);
+                    self.s.m.bin(c, Bin::UDiv, n, k)
+                } else {
+                    n
+                };
+                let mut words = vec![(2, n)];
+                // Its address too, where the code computes with it and the
+                // host can tell it.
+                let computed = (0..2u8).any(|k| {
+                    inst.write(Reg::S(code + first + k))
+                        .is_some_and(|v| self.computed_with(v, 6))
+                });
+                if first == 0
+                    && computed
+                    && let Some((lo, hi)) = self.view_address(site)
+                {
+                    words.extend([(0, lo), (1, hi)]);
+                }
+                words
+            }
+        };
+        for k in 0..count {
+            let rel = k.wrapping_sub(u32::from(first));
+            match words.iter().find(|w| w.0 == rel) {
+                Some(&(_, x)) => self.write(inst, Reg::S(code + k as u8), x, None),
+                None => {
+                    if let Some(v) = inst.write(Reg::S(code + k as u8)) {
+                        self.vals.insert(v, Val::Missing(OTHER));
+                        self.stale.insert(v);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn descriptor_data(&mut self, inst: &Inst, site: Site) -> Result<(), Why> {
         const OTHER: Why = "a descriptor's address or format read as data";
         let Fields::Smem {
@@ -5579,6 +5703,22 @@ impl<'a> Lower<'a> {
                 }
                 return Ok(());
             }
+            // A texture's dwords read only as numbers (a width or height
+            // picked from the heap by an index, bitfields of the GFX10
+            // layout): no instruction names the view, so its kind is taken
+            // for the common case, a 2D image, and its dimensions are
+            // rebuilt as they are for a named one.
+            if count >= 5
+                && self.scalar.get(&site).is_some_and(|a| {
+                    self.x
+                        .native
+                        .layout
+                        .get(a.param)
+                        .is_some_and(|rp| rp.root == RootType::ResourceHeap)
+                })
+            {
+                return self.descriptor_words(inst, site, 0, (2, 0x409), Some(2), false);
+            }
             // A descriptor's dwords read as numbers (its stride, count or
             // format): no form stands for them. The registers hold nothing
             // (`Missing`), so the instructions that compute with those
@@ -5639,95 +5779,7 @@ impl<'a> Lower<'a> {
             }
             _ => return Err("a scalar memory read as data"),
         };
-        let h = self.handle(site, &src, false, props)?;
-        let c = self.cur;
-        let i32t = self.s.t.i32;
-        let dims = self.s.m.named_struct("dx.types.Dimensions", vec![i32t; 4]);
-        let mip = if image.is_some() && !uav {
-            self.s.m.i32(0)
-        } else {
-            self.s.m.undef(i32t)
-        };
-        let d = self
-            .s
-            .op(c, "getDimensions", Attr::ReadOnly, dims, 72, &[h, mip]);
-        let field = |l: &mut Self, k: u32| l.s.m.extract(c, d, k);
-        let words: Vec<(u32, V)> = match image {
-            Some(kind) => {
-                let one = self.s.m.i32(1);
-                let w = field(self, 0);
-                let (height, depth) = match kind {
-                    1 => (one, one),
-                    2 => (field(self, 1), one),
-                    6 => (one, field(self, 1)),
-                    _ => (field(self, 1), field(self, 2)),
-                };
-                let levels = if uav { one } else { field(self, 3) };
-                let less = |l: &mut Self, x: V| l.s.m.bin(c, Bin::Sub, x, one);
-                let (w, height, depth, levels) = (
-                    less(self, w),
-                    less(self, height),
-                    less(self, depth),
-                    less(self, levels),
-                );
-                let k = |l: &mut Self, v: u32| l.s.m.i32(v);
-                let (k30, k2, k14, k16, mask) = (
-                    k(self, 30),
-                    k(self, 2),
-                    k(self, 14),
-                    k(self, 16),
-                    k(self, 0x3FFF),
-                );
-                let d1 = self.s.m.bin(c, Bin::Shl, w, k30);
-                let hi = self.s.m.bin(c, Bin::LShr, w, k2);
-                let hi = self.s.m.bin(c, Bin::And, hi, mask);
-                let ht = self.s.m.bin(c, Bin::Shl, height, k14);
-                let d2 = self.s.m.bin(c, Bin::Or, hi, ht);
-                let ty = [0, 8, 9, 0, 10, 0, 12, 13][kind as usize];
-                let base = k(self, 0xFAC | ty << 28);
-                let last = self.s.m.bin(c, Bin::Shl, levels, k16);
-                let d3 = self.s.m.bin(c, Bin::Or, base, last);
-                vec![(1, d1), (2, d2), (3, d3), (4, depth)]
-            }
-            None => {
-                // A raw view counts bytes; the descriptor's record count is in elements.
-                let n = field(self, 0);
-                let stride = used.map_or(0, |u| u.stride);
-                let n = if props.0 & 0xFF == 11 && stride > 1 {
-                    let k = self.s.m.i32(stride);
-                    self.s.m.bin(c, Bin::UDiv, n, k)
-                } else {
-                    n
-                };
-                let mut words = vec![(2, n)];
-                // Its address too, where the code computes with it and the
-                // host can tell it.
-                let computed = (0..2u8).any(|k| {
-                    inst.write(Reg::S(code + first + k))
-                        .is_some_and(|v| self.computed_with(v, 6))
-                });
-                if first == 0
-                    && computed
-                    && let Some((lo, hi)) = self.view_address(site)
-                {
-                    words.extend([(0, lo), (1, hi)]);
-                }
-                words
-            }
-        };
-        for k in 0..count {
-            let rel = k.wrapping_sub(u32::from(first));
-            match words.iter().find(|w| w.0 == rel) {
-                Some(&(_, x)) => self.write(inst, Reg::S(code + k as u8), x, None),
-                None => {
-                    if let Some(v) = inst.write(Reg::S(code + k as u8)) {
-                        self.vals.insert(v, Val::Missing(OTHER));
-                        self.stale.insert(v);
-                    }
-                }
-            }
-        }
-        Ok(())
+        self.descriptor_words(inst, site, first, props, image, uav)
     }
 
     /// `s_load_dword*` from the program's constant table.
