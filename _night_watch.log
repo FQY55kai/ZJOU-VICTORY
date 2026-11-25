@@ -1,3 +1,27 @@
+[2026-11-25 13:42:37] ---- 第 46 轮 ----
+[2026-11-25 13:42:39] fxceless 新提交:
+[2026-11-25 13:42:39] 310c6eb Packed textures stay in the upload queue; a texture on the card is refreshed when the card is full
+c96b4f2 The depth bounds test works (#82); faster defaults; textures are on the card before the character bake; one host copy per placed texture
+a803c87 Textures picked by index are looked at again after their upload (characters' skin and hair without colour in most launches)
+31714de Take the fix/amd-view-heap-clamp branch of triippywhale's fork (as one commit)
+3bff182 Take the test/fx-prs branch of asdaasdsaddf's fork (as one commit)
+2119b0e Put the parked lane-mask change (#11) back
+9e49b8a Take the parked lane-mask change (#11) back out for now
+4e17478 The game is no longer named in the tree
+[2026-11-25 13:42:39] jman 新提交(仅记录):
+[2026-11-25 13:42:39] d9548c0 Merge pull request #565 from geiyiliyabumo/jman/46-heap-copy-mirror
+e00a019 Merge pull request #571 from geiyiliyabumo/jman/95-structured-unknown-stride
+05cc5c8 Merge pull request #575 from JMAN730/claude/ecstatic-clarke-qamo10
+49a5881 Merge pull request #576 from ligmaSec/jman-streamed-mips
+92350c9 GPU: keep the adapter-selection error in the default-adapter fallback warning
+[2026-11-25 13:42:39] origin 新提交(仅记录):
+[2026-11-25 13:42:39] 940d32f GPU: a marked page's copy-back does not save the page for its own copy
+cd94d35 GPU: shaders mark the pages they write through views; copy-backs compare only those
+ccfb029 Tests: a machine with no GPU has no hardware adapter to check shaders on
+42363ab Tests: hardware-only shader checks skip on a machine without a GPU
+4118f33 Merge pull request #928 from BastienRodz/gpu/device-removed-reason
+Already up to date.
+[2026-11-25 13:42:39] fxceless 合并成功，需重建
 warning: unreachable pattern
     --> crates\victory-shader\src\emit\lower.rs:7243:13
      |
@@ -31,7 +55,6 @@ warning: variant `FpExt` is never constructed
     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
 
 warning: `victory-shader` (lib) generated 3 warnings
-    Checking victory-gpu v0.1.0 (D:\victory-fx\crates\victory-gpu)
 warning: unused import: `host::depth_bounds_test`
    --> crates\victory-gpu\src\pipeline.rs:122:16
     |
@@ -49,12 +72,12 @@ warning: unused variable: `drop`
     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
 
 warning: method `recheck` is never used
-   --> crates\victory-gpu\src\descriptor\host.rs:413:8
+   --> crates\victory-gpu\src\descriptor\host.rs:414:8
     |
 389 | impl TextureQueue {
     | ----------------- method in this implementation
 ...
-413 |     fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
+414 |     fn recheck(&mut self, index: u32, frame: u64, at: (u64, u64), print: u64) {
     |        ^^^^^^^
     |
     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
@@ -72,6 +95,6 @@ warning: function `placed_filler_twins` is never used
      |               ^^^^^^^^^^^^^^^^^^^
 
 warning: `victory-gpu` (lib) generated 5 warnings (run `cargo fix --lib -p victory-gpu` to apply 2 suggestions)
-    Checking victory-hle v0.1.0 (D:\victory-fx\crates\victory-hle)
-    Checking victory v0.1.0 (D:\victory-fx\apps\victory)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.74s
+    Finished `release` profile [optimized + debuginfo] target(s) in 0.16s
+[2026-11-25 13:42:43] 构建成功
+[2026-11-25 13:42:43] 游戏已启动（night_run.log）

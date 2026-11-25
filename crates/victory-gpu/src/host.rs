@@ -6395,8 +6395,29 @@ impl Host {
     pub(crate) fn uav_buffer(&self, size: u64) -> Option<ID3D12Resource> {
         MADE[4].fetch_add(1, Ordering::Relaxed);
         MADE[5].fetch_add(size, Ordering::Relaxed);
+        // The console's memory is unified: the GPU reads what the CPU wrote
+        // where it wrote it. `VICTORY_UNIFIED=1` (experimental) puts these
+        // buffers in system memory the card reads over a resizable BAR's
+        // window: the GPU fetches the CPU's bytes directly and its writes
+        // are visible to the CPU at once. OFF by default: with the current
+        // compare and fetch passes running over such buffers the driver's
+        // device was removed within a minute of the world loading (RTX
+        // 4080). Turning it on for good needs those passes to read shared
+        // memory the way the console's do (no compute hashing over it).
+        static UNIFIED: OnceLock<bool> = OnceLock::new();
+        let unified = *UNIFIED.get_or_init(|| std::env::var_os("VICTORY_UNIFIED").is_some_and(|v| v == "1"));
+        // System memory the card reads over the bus (a resizable BAR's
+        // window): allowed to be written by shaders, unlike an upload
+        // heap. Where the card has no such window the creation fails and
+        // the old split (the card's own memory) is used.
         let heap = D3D12_HEAP_PROPERTIES {
-            Type: D3D12_HEAP_TYPE_DEFAULT,
+            Type: if unified { D3D12_HEAP_TYPE_CUSTOM } else { D3D12_HEAP_TYPE_DEFAULT },
+            CPUPageProperty: if unified {
+                D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE
+            } else {
+                D3D12_CPU_PAGE_PROPERTY_UNKNOWN
+            },
+            MemoryPoolPreference: if unified { D3D12_MEMORY_POOL_L0 } else { D3D12_MEMORY_POOL_UNKNOWN },
             ..Default::default()
         };
         let desc = D3D12_RESOURCE_DESC {
@@ -6427,6 +6448,36 @@ impl Host {
         };
         match made {
             Ok(()) => buffer,
+            Err(e) if unified => {
+                // No window for the card into system memory: the card's
+                // own, as before.
+                static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                if !SAID.swap(true, Ordering::Relaxed) {
+                    tracing::warn!(error = %e, "no shared (unified) memory window; buffers go in the card's own memory");
+                }
+                let heap = D3D12_HEAP_PROPERTIES {
+                    Type: D3D12_HEAP_TYPE_DEFAULT,
+                    ..Default::default()
+                };
+                // SAFETY: plain creation of a device-local buffer.
+                let made = unsafe {
+                    self.device.CreateCommittedResource(
+                        &heap,
+                        D3D12_HEAP_FLAG_NONE,
+                        &desc,
+                        D3D12_RESOURCE_STATE_COMMON,
+                        None,
+                        &mut buffer,
+                    )
+                };
+                match made {
+                    Ok(()) => buffer,
+                    Err(e) => {
+                        tracing::warn!(error = %e, size, "no unordered-access buffer");
+                        None
+                    }
+                }
+            }
             Err(e) => {
                 tracing::warn!(error = %e, size, "no unordered-access buffer");
                 None
