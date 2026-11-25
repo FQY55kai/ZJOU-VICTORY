@@ -192,6 +192,10 @@
 | `VICTORY_UNIFIED` | 统一内存缓冲 | **默认 0（勿开，待改造）** |
 | `VICTORY_HEAP_RECHECK` / `VICTORY_VIEW_GUARD` / `VICTORY_TEXTURE_SWEEP` | joshuu 修复开关 | 默认开 |
 | `VICTORY_AMBIENT` | 间接漫反射光常量（0=全黑，`off`=保留原输出） | 默认 `0.6`；觉得偏亮可下调 |
+| `VICTORY_BVH_BUILDER` | **开光追构建器**（标题 52 个 BVH 构建程序 + 约 1,000 个 resolve 程序） | 默认 `0`；开闸首跑要多编译 1.4–2.5 小时，见第十章 |
+| `VICTORY_BVH_QUARANTINE` | 构建器产出只留宿主副本、不回写 title 内存 | 首次开闸配 `VICTORY_BVH_BUILDER=1` 用，防写坏 title 对象 |
+| `VICTORY_RT_RESOLVE` | 单独造 resolve 管线（不开构建器时它们没有命中可着色，纯浪费） | 默认 `0` |
+| `VICTORY_WAVE_WHY` | 打印 wave64 重试每一步（`own_bits` / `WAVE64-WIDE`） | 诊断光追翻译时开 |
 | `victory warm` | 着色器预热 | 更新构建后跑一次 |
 
 ### 操作方式（不接手柄时）
@@ -230,7 +234,9 @@
 
 **为什么它值得做**：这是从"能跑"到"好看"的分水岭。做完之后阴影不再是死黑，画面观感接近主机。
 
-> **2026-11-25 夜更新：这条路已经有人走通了。** PortWatch 榜首 `DexNom/VIctory`（78%，RX 7900 XTX）已跑通光追光照，做法与我们下面的判断一致——**不映射到 DXR**，而是翻译标题自己的 52 个 BVH 构建程序与 64 个遍历程序，只把 `image_bvh*_intersect_ray` 一条指令用 DXIL 模拟（详见其 `docs/fork-ray-tracing.md`）。所以本章的任务从"从零造"改为"移植"，见**第十章**。
+> **2026-11-25 夜更新：这条路已经有人走通了。** PortWatch 榜首 `DexNom/VIctory`（78%，RX 7900 XTX）已跑通光追光照，做法与我们下面的判断一致——**不映射到 DXR**，而是翻译标题自己的 52 个 BVH 构建程序与 64 个遍历程序，只把 `image_bvh*_intersect_ray` 一条指令用 DXIL 模拟（详见其 `docs/fork-ray-tracing.md`）。
+>
+> **2026-11-26 凌晨更正**：查证后发现这套着色器代码**早就在我们树里**（`6a2d9f99` 已是祖先，`intersect.rs` / `own_bits.rs` / `wave64_tests.rs` / `docs/fork-ray-tracing.md` 全在且已接线）。缺的不是代码，是 `pipeline.rs` 里 `VICTORY_BVH_BUILDER` 那道硬门，而它注释里写的解锁条件（"遍历结构的程序能翻译"）现在已经满足。证据与下一步见**第十章**。
 
 ### 我们已经有的（地基是实的）
 
@@ -378,7 +384,99 @@ Xbox 的 XDXR 有两种可能的实现，决定了完全不同的工程路线：
 | `ed0dbfd1` | shader 声明范围内若有 title 写入，副本会保持陈旧（某 RTX 4050 上 dispatch 读到 0 尺寸死循环直到设备移除） | 依赖上游 shadow 重构（`tracked` 字段、`before` 结构都不同）。**我们树里确实有同一缺陷**（`Shadow::update` 整段跳过 `pending` 范围），但修法要同时改快照，否则回写会覆盖 title 的后续写入——写回路径最怕内存损坏，不硬凑 |
 | DexNom `bc3cd4b0` 等 6 个 RT 提交 | **光追光照本身** | 依赖 `cd94d353` 与那一大块落地；它的 `memory.rs +396`、新增 `writeback.rs 321` 正是建立在我们没有的地基上 |
 
-**下一步的推荐路径**：先在一个独立 worktree 里把上游 `940d32f6` 整棵树拉起来（它能编译、能自测），再按 crate 逐块把我们的改动搬上去（`lower` 的 quad read、`AMBIENT`、鼠标映射、`changed_runs_within`、descriptor 去重、relay/flight），每搬一块跑一次 563 个测试；最后叠 DexNom 的 RT 提交。这才是拿得到光追的唯一稳妥路线。
+另外两条原计划要搬的改动，查证后**已被上游自己的机制取代**，不再移植：
+
+| 我们的改动 | 上游的替代 |
+|---|---|
+| `shadow.rs` 的 `changed_runs_within`（变更段合并） | 上游 `cd94d353` 改成**页标记**：shader 声明它经视图写过哪些页，回读只比那些页。逐字节差分这整条路径在上游已不存在（`git grep "fn changed_runs" 940d32f6` 为空） |
+| `descriptor_data` 去重 | 上游的页标记落地后重复已不存在（`fn descriptor_data` 与 `fn descriptor_words` 在 `940d32f6` 中各只出现 1 处） |
+
+### 更正：光追的着色器层早就在我们树里（2026-11-26 凌晨）
+
+上一版写的"最后叠 DexNom 的 RT 提交"这个计划，查证后发现前提是错的：
+
+| 查证项 | 结果 |
+|---|---|
+| DexNom/fxceless 的光追着色器提交 `6a2d9f99`（"Shadow and trace programs translate"） | **`git merge-base --is-ancestor 6a2d9f99 0b969193` = 是。它已经是我们的祖先**，再 cherry-pick 是空操作 |
+| 该提交新增的文件 | `own_bits.rs`（914 行）、`wave64_tests.rs`（452 行）、`docs/fork-ray-tracing.md`——**三者在主树里都在**，`emit/mod.rs` 也已 `mod own_bits; mod wave64_tests;` 接线 |
+| `image_bvh*_intersect_ray` 的模拟 | `crates/victory-shader/src/emit/intersect.rs`（557 行）+ `src/bvh.rs`，来自同一支线 `578d459c`，`lower.rs` 已 `#[path = "intersect.rs"] mod intersect;` |
+| `lower.rs` 的接入点 | 已接：`own_bits: super::own_bits::OwnBits`（273 行）、`own_bits::find(...)`（634 行）、循环里 `self.own_bits.alike` / `totals`（6773、880 行） |
+
+也就是说：**我们缺的从来不是光追的着色器代码，那部分早在树里了。**
+
+### 上游走的是另一条路（同一条指令，两种实现）
+
+上游 `940d32f6` 里也有一条 `image_bvh_intersect_ray` 的实现，但和我们这支完全独立：
+
+| | 我们（fxceless / ZSlayer / DexNom 支线） | 上游 `940d32f6` |
+|---|---|---|
+| 求交模拟 | `emit/intersect.rs` 557 行 + `src/bvh.rs` 696 行 | `emit/lower/bvh.rs` 535 行（`0b35b7fe`） |
+| 波前 64 的处理 | **车道模拟**：`own_bits`、`structure_wide`、`without_early_outs`、`without_skips`、`widen`、`with_local_waves`——把 console wave64 拆成两个 host wave 再用 LDS 交换 | **直接声明**：`lower.rs:541 s.wave_size = Some(wave)`，在 DXIL 里要 `WaveSize=64`，让设备自己支持 |
+| 代价 | 约 2,300 行模拟代码，翻译慢、逻辑绕 | 设备不支持 wave64 就翻译不出来（NVIDIA 的 D3D12 `WaveLaneCountMax` = 32） |
+
+上游那 6 个测试在这台机器上本来就失败（`permutes_read_the_lane_named_and_zero_from_lanes_left_out` 等），正是这条分歧的副作用。
+
+### DexNom 的 `570a941e` 是一个假补丁
+
+`570a941e`（"Publish DexNom Runtime Radeon sources"，170 文件 / +49,715 −36,762）的父提交**正是** `940d32f6`，但它的树**不是**"上游 + 光追"，而是**整棵 fork 树的快照**。证据是它相对上游删掉了上游独有的模块：
+
+| 被删掉的上游模块 | 用途 |
+|---|---|
+| `bindless.rs` | bindless 纹理队列 |
+| `external.rs` / `switch.rs` / `tdr.rs` / `twin.rs` | 外部资源、开关、TDR、孪生拷贝 |
+| `emit/lower/bvh.rs` | 上游自己的 BVH 求交 |
+
+**结论：把 `570a941e` 合进来等于用 fork 树覆盖上游 319 个提交的成果**，冲突只有 5 文件 / 9 块（正好是我们刚移植过的那 5 个文件），但合完就退回上游之前。这条路不走。
+
+### 真正的缺口：一道硬门
+
+光追在本树里的最后一步不是写代码，是 `crates/victory-gpu/src/pipeline.rs` 里这道门：
+
+```rust
+// shortcut: and only with `VICTORY_BVH_BUILDER=1`, until a run has shown
+// the whole builder and the host side of title memory by address
+// (`memory.rs`) working on a card; nothing reads the structures before
+// the programs that walk them translate.
+fn builder_runs() -> bool {
+    if !ALLOWED.get_or_init(|| env::var_os("VICTORY_BVH_BUILDER") == Some("1".into())) { return false; }
+    ...
+}
+```
+
+门上的注释写着解锁条件："**直到遍历结构的程序能翻译**"。而按上面查证，遍历程序（`intersect.rs` + `own_bits.rs` + `wave64_tests.rs`）**现在能翻译了**——前提已满足，门却还锁着。
+
+配套的诊断开关也在，正是为首次开闸准备的：
+
+| 开关 | 作用 |
+|---|---|
+| `VICTORY_BVH_QUARANTINE=1` | 构建器写的东西只留在宿主副本、不回写 title 内存——首次跑全构建器的保险（"a stage that stores where it should not can then not reach the title's own objects"） |
+| `VICTORY_RT_RESOLVE=1` | 让 resolve 管线被造出来 |
+| `VICTORY_WAVE_WHY=1` | 打印 wave64 重试的每一步（`own_bits` 走到哪条路） |
+
+**开闸的代价（必须预备好）**：`pipeline/make.rs::without_structures` 在构建器关着时会把 `CS_RaytracingResolve` 整批丢掉——注释写明那是**约 1,000 个计算程序，全部绑定在世界第一帧，每个要 AMD 编译器 5–9 秒**。所以：
+
+- `VICTORY_BVH_BUILDER=1` 一开，这 1,000 个程序全部要造出来，**首次进世界的光编译时间约 1.4–2.5 小时**（5–9 s × 1000）。
+- 这不是 bug，是"构建器关着就没有命中可着色"的必然结果，也正是它默认关着的原因。
+- 缓解：着色器缓存（`hits=1846 misses=0` 的那套）会把这 1,000 个的翻译结果留下来，**第二次启动起为 0**。所以开闸前务必确认缓存目录可写、且 `lib.rs::sources()` 不再变动（任何源文件增删都会让缓存整体失效一次）。
+
+### 本轮实际做完的事
+
+在独立 worktree `D:/victory-up`（分支 `up-base`，基 `940d32f6`）里，按 crate 逐块搬我们的改动，每块跑测试：
+
+| 提交 | 内容 | 验证 |
+|---|---|---|
+| `75afad29` | 鼠标映射（`gameinput.rs`：`scripted_keys()` 与 `mouse()` 并存，`merge_scripted` 走 `fallback(scripted, MouseState::default())`） | 编译通过 |
+| `1691f839` | quad-local read 到达 helper lane，收在 `VICTORY_QUAD_HELPERS=1` 后面（上游的规则是它自己硬件测试写的那条，而这台机器上那 6 个测试本来就是红的，无法判定对错，所以默认保持上游行为） | 编译通过 |
+| `fc472c36` | 常量间接光 `AMBIENT`（`ambient.rs` + `pipeline.rs` 的 `resolves_light` + `draw.rs` 的 `self.ambient(list, p)`） | `victory-gpu` **144 passed / 0 failed** |
+
+`relay/flight`（`VICTORY_RELAY=1` 独立回读线程）在这棵树上**没有对应物**——上游有自己的多 flight 实现，要做得端到端重做，不在本轮范围。
+
+### 下一步（按证据排序）
+
+1. **开闸试一次**：主树上 `VICTORY_BVH_BUILDER=1 VICTORY_BVH_QUARANTINE=1 VICTORY_WAVE_WHY=1` 跑序章。预算好时间：首次进世界要多编译约 1,000 个 resolve 程序（1.4–2.5 小时），第二次启动走缓存为 0。观察 ① 构建器全部程序是否造出管线（`builder_off` 会打印 `missing` / `of`）② `WAVE64-WIDE` / `own_bits` 走到哪一步 ③ 有没有 `DEVICE_HUNG`。这是唯一能把"78%"变成我们自己的数据的动作。
+2. 若构建器跑通但画面仍黑：问题在结果回读（`VICTORY_BVH_QUARANTINE` 会让 title 读不到尺寸/计数器），按 `pipeline.rs` 注释的提示逐级放开。
+3. 若某几个构建程序翻译不出：`VICTORY_WAVE_WHY=1` 会给出它停在哪种形式，再决定补 `without_skips(deep)` 还是 `widen`。
+4. 若 1,000 个 resolve 程序的编译时间不可接受：上游的 `WaveSize=64` 路线（`lower/bvh.rs`）不模拟车道、翻译快，代价是只在这台卡支持 wave64 时可用——可作为第二条腿，按 `VICTORY_*` 开关二选一。
 
 ---
 
