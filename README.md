@@ -50,6 +50,16 @@
 
 改档：编辑 `_Start-GTA6.cmd` 顶部 `VICTORY_PROFILE`（8/12/16），或设同名环境变量。
 
+## 源码
+
+完整源码在同仓库 [`source/`](./source) 目录（victory-scarlett `scarlett-fox` 分支快照 `bc264a4`，382 文件）：
+
+```
+cargo build --release --locked --bin victory
+```
+
+发布包的差异全部在启动脚本参数层（显存档位、缓存隔离、画面修复开关、流程脚本），源码本身与上游一致。详见 [`source/README-源码说明.md`](./source/README-源码说明.md)。
+
 ## 已知问题（上游未解决）
 
 - 某些场景的紫斑可能残留几秒；角色身上偶见品红条纹（上游 README 有记录）
@@ -72,7 +82,7 @@
 - 构建：`cargo build --release --locked --bin victory`
 - 谱系：`Marvisak/VIctory` → `fxceless/victory-fork` → `Op-lite/victory-scarlett`
 
-## 致谢
+## 引用与致谢
 
 上游 `Op-lite`、`fxceless`、`Marvisak` 及所有贡献者。
 
