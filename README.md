@@ -1,6 +1,6 @@
 # GTA VI (Xbox) PC 移植包 — scarlett-fox 通用版
 
-> 版本：**2611272037**（2026-11-27 20:13 构建）
+> 版本：**2611272041**（2026-11-27 20:13 构建）
 > 分支：`Op-lite/victory-scarlett` @ `scarlett-fox`（commit `bc264a4`）
 > 目标：让 **8GB / 12GB / 16GB+** 显存的 N 卡用户都能跑起来，开箱即用
 
@@ -87,7 +87,7 @@ set "VICTORY_GAME_DIR=D:\Games\GTA6.Xbox.v1.0.2.1"
 | 类型 | 路径 | 说明 |
 |---|---|---|
 | 着色器/管线/纹理缓存 | `%LOCALAPPDATA%\victory-scarlett-fox` | 本版专用，**不与其它分支共享** |
-| 存档 | `%LOCALAPPDATA%\victory-scarlett-data` | 与缓存物理分离，删档不影响预热成果 |
+| 存档 | `%LOCALAPPDATA%\victory-scarlett-data\<TitleID>\saves` | 与缓存物理分离，删档不影响预热成果（TitleID 首次运行时自动生成，如 `7952987A`） |
 
 **为什么隔离**：其它分支（如 VIctory-NVIDIA）默认写 `%LOCALAPPDATA%\victory`，
 混用缓存会导致 **树木紫色描边、模型乱闪**。① 号步骤会把这些外来缓存全部删掉。
@@ -129,6 +129,12 @@ README.md           本文件
 - 构建命令：`cargo build --release --locked --bin victory`
 - 上游谱系：`Marvisak/VIctory` → `fxceless/victory-fork` → `Op-lite/victory-scarlett`
 - 本包改动：多显存档位、缓存/存档隔离、1-4 步流程脚本、自动跑图看门狗、横幅读秒、黑匣子日志
+
+## 更新记录
+
+- **2611272041 前后**：修复自由模式存档未加载的问题——游戏实际从 `<data>\<TitleID>\saves` 读取存档，旧包装到了 `<data>\saves`（高一层），导致进游戏开新档。现自动识别 TitleID 目录并装到正确位置，第 3 步按同层级删除。
+- 第 1 步恢复"全删"策略（含本版缓存），防止跨版本结构性冲突；日常玩只跑第 4 步。
+- 设置游戏路径改为弹窗选择文件夹。
 
 ## 已知限制
 

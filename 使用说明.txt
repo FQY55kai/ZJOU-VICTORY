@@ -51,3 +51,5 @@ X X / Y Y / 左trigger QE / 右trigger ZC / F H 摇杆按下 / ESC 主菜单 / TAB 视角
 
 【改游戏路径】双击 设置游戏路径.cmd，会弹出文件夹选择框，
               选中含 game_scarlett_master.exe 的文件夹即可（四步通用）。
+
+【存档位置】游戏从 %LOCALAPPDATA%\victory-scarlett-data\<TitleID>\saves 读取（如 7952987A），第 2 步会自动装到正确位置。
