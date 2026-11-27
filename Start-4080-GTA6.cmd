@@ -13,7 +13,7 @@ set VICTORY_EXE=%~dp0victory.exe
 rem ---- crash prevention (DO NOT change) ----
 set VICTORY_TEXTURE_MIP_DROP=1
 set VICTORY_TEXTURE_BUDGET_MB=6144
-set VICTORY_TEXTURE_ROOM_PERCENT=80
+set VICTORY_TEXTURE_ROOM_PERCENT=85
 
 rem ---- 30fps tier ----
 set VICTORY_FRAME_INTERVAL_MS=33.3
