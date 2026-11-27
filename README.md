@@ -78,8 +78,8 @@ set "VICTORY_GAME_DIR=D:\Games\GTA6.Xbox.v1.0.2.1"
 | 档位 | 纹理预算 | ROOM | 缓冲 | MIP 降级 | 适用 |
 |---|---|---|---|---|---|
 | 8GB | 4096MB | 80% | 512MB | 开 | 8GB 及以下 |
-| 12GB | 6144MB | 85% | 1024MB | 开 | 10–14GB（4080 Laptop 实测 21–30fps） |
-| 16GB+ | 8192MB | 90% | 2048MB | 关 | 16GB 及以上 |
+| 12GB | 8192MB | 85% | 1024MB | 开 | 10–14GB（4080 Laptop 实测 21–30fps） |
+| 16GB+ | 12288MB | 90% | 2048MB | 关 | 16GB 及以上 |
 
 修改方式：编辑 `_Start-GTA6.cmd` 顶部 `VICTORY_PROFILE`（8/12/16），或设置同名环境变量。
 
