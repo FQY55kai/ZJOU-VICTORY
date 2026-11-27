@@ -1,6 +1,6 @@
 # GTA VI (Xbox) PC 移植包 — scarlett-fox 通用版
 
-> 版本：**scarlett-fox-通用-2611272013**（2026-11-27 20:13 构建）
+> 版本：**2611272026**（2026-11-27 20:13 构建）
 > 分支：`Op-lite/victory-scarlett` @ `scarlett-fox`（commit `bc264a4`）
 > 目标：让 **8GB / 12GB / 16GB+** 显存的 N 卡用户都能跑起来，开箱即用
 
